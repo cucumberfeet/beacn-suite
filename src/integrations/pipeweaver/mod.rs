@@ -113,6 +113,7 @@ pub fn launch_pipeweaver_ui() -> bool {
 mod channel;
 mod helpers;
 mod layout;
+pub(crate) mod official;
 mod pieces;
 
 const COLOUR_MIX_A: RGBA = RGBA {
@@ -864,8 +865,20 @@ impl PipeweaverHandler {
         let dial = renderer.dial_key(mix);
         if shown.dial != Some(dial) {
             let (x, y) = dial_origin();
-            let jpeg = renderer.get_volume(mix)?;
-            out.push(BeacnMessage::Image(slot_x + x, slot_y + y, jpeg));
+            if let Some(pack) = official::pack() {
+                // Official artwork: send the pre-rendered tile as-is, centred on the dial slot.
+                let (_, volume, meter) = dial;
+                // TODO: mute faces (official::Face::Muted etc.) need the mute state folded
+                // into `dial_key` so the cache redraws on mute changes; volume face only for now.
+                let face = official::Face::Volume;
+                let (dx, dy) = pack.centre_offset(layout::VOLUME_DIMENSIONS);
+                let px = (slot_x as i32 + x as i32 + dx).max(0) as u32;
+                let py = (slot_y as i32 + y as i32 + dy).max(0) as u32;
+                out.push(BeacnMessage::Image(px, py, pack.tile(face, volume, meter)));
+            } else {
+                let jpeg = renderer.get_volume(mix)?;
+                out.push(BeacnMessage::Image(slot_x + x, slot_y + y, jpeg));
+            }
             shown.dial = Some(dial);
         }
 
