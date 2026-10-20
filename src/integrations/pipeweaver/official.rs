@@ -27,7 +27,7 @@ pub const TILES_PER_FACE: usize = VOLUME_STEPS * (VOLUME_STEPS + 1) / 2; // 5050
 pub const FACE_COUNT: usize = 6;
 pub const EXPECTED_TILES: usize = TILES_PER_FACE * FACE_COUNT; // 30300
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Face {
     Volume = 0,
     Muted = 1,
@@ -144,7 +144,7 @@ pub fn jpeg_dimensions(j: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
-fn configured_path() -> Option<PathBuf> {
+pub(crate) fn configured_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("BEACN_OFFICIAL_ARTWORK") {
         if !p.is_empty() {
             return Some(PathBuf::from(p));

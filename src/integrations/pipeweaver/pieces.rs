@@ -33,6 +33,26 @@ pub(crate) enum PieceKey {
         a: MuteFace,
         b: Option<MuteFace>,
     },
+
+    // Official-look layout (see official_screen.rs). These carry their slot because the
+    // background texture behind them differs per slot.
+    OfficialCard {
+        slot: u8,
+        title: String,
+        colour: Rgb3,
+        lines: Vec<String>,
+    },
+    OfficialBlankCard {
+        slot: u8,
+    },
+    OfficialButton {
+        slot: u8,
+        label: String,
+        active: bool,
+    },
+    OfficialBlankButton {
+        slot: u8,
+    },
 }
 
 impl PieceKey {
@@ -41,6 +61,8 @@ impl PieceKey {
         match self {
             PieceKey::Top { .. } => CHANNEL_INNER_POSITION,
             PieceKey::Mute { .. } => (CHANNEL_INNER_POSITION.0, MUTE_BAR_POSITION.1),
+            // Official pieces are positioned absolutely by the official planner
+            _ => (0, 0),
         }
     }
 }
@@ -120,9 +142,19 @@ fn rgba(c: Rgb3) -> Rgba<u8> {
 }
 
 pub(crate) fn render_piece(key: &PieceKey) -> Result<Jpeg> {
+    use crate::integrations::pipeweaver::official_screen;
+    let official = || official_screen::kit().ok_or_else(|| anyhow::anyhow!("Official kit missing"));
     let img = match key {
         PieceKey::Top { colour, title } => render_top(rgba(*colour), title),
         PieceKey::Mute { kind, colour, a, b } => render_mute(*kind, rgba(*colour), *a, *b),
+        PieceKey::OfficialCard { slot, title, colour, lines } => {
+            return official()?.card(*slot as usize, title, *colour, lines);
+        }
+        PieceKey::OfficialBlankCard { slot } => return official()?.blank_card(*slot as usize),
+        PieceKey::OfficialButton { slot, label, active } => {
+            return official()?.button(*slot as usize, label, *active);
+        }
+        PieceKey::OfficialBlankButton { slot } => return official()?.blank_button(*slot as usize),
     };
     Ok(Arc::new(DrawingUtils::image_as_jpeg(
         img,
@@ -354,6 +386,7 @@ pub(crate) struct SlotShown {
     pub(crate) top: Option<PieceKey>,
     pub(crate) mute: Option<PieceKey>,
     pub(crate) dial: Option<(Mix, u8, u8)>,
+    pub(crate) face: Option<crate::integrations::pipeweaver::official::Face>,
 }
 
 /// What we believe the device is currently displaying. Anything not matching what we want
@@ -363,6 +396,9 @@ pub(crate) struct SlotShown {
 pub(crate) struct ScreenModel {
     pub(crate) header_drawn: bool,
     pub(crate) slots: [SlotShown; 4],
+    // Official layout only: what the mix toggle and page dots currently show
+    pub(crate) pill: Option<Option<Mix>>,
+    pub(crate) dots: Option<(u8, u8)>,
 }
 
 impl ScreenModel {

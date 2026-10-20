@@ -114,6 +114,7 @@ mod channel;
 mod helpers;
 mod layout;
 pub(crate) mod official;
+pub(crate) mod official_screen;
 mod pieces;
 
 const COLOUR_MIX_A: RGBA = RGBA {
@@ -328,7 +329,10 @@ impl PipeweaverHandler {
     }
 
     async fn draw_splash(&mut self) {
-        let message = BeacnMessage::Image(0, 0, PW_SPLASH.clone());
+        let splash = official_screen::kit()
+            .and_then(|kit| kit.splash(None).ok())
+            .unwrap_or_else(|| PW_SPLASH.clone());
+        let message = BeacnMessage::Image(0, 0, splash);
         let _ = self.send_message(message).await;
 
         // The splash covers everything, invalidate our model
@@ -336,6 +340,13 @@ impl PipeweaverHandler {
     }
 
     async fn draw_status(&self, text: &str) {
+        if let Some(kit) = official_screen::kit()
+            && let Ok(strip) = kit.status_strip(text)
+        {
+            let (x, y) = official_screen::STATUS_POS;
+            let _ = self.send_message(BeacnMessage::Image(x, y, strip)).await;
+            return;
+        }
         let text = DrawingUtils::draw_text(
             text.into(),
             800,
@@ -782,6 +793,9 @@ impl PipeweaverHandler {
     }
 
     async fn sync_display_now(&mut self) -> Result<()> {
+        if official_screen::kit().is_some() {
+            return self.sync_display_official().await;
+        }
         let mut messages = Vec::new();
         for index in 0..self.screen.slots.len() {
             messages.extend(self.plan_slot(index, false)?);
@@ -812,6 +826,9 @@ impl PipeweaverHandler {
     // Works out what a slot needs sending to match its renderer, and records that we sent it.
     // Sending a plate wipes the slot, so everything on top of it has to be sent again after it.
     fn plan_slot(&mut self, index: usize, dial_only: bool) -> Result<Vec<BeacnMessage>> {
+        if official_screen::kit().is_some() {
+            return self.plan_slot_official(index, dial_only);
+        }
         let mut out = Vec::new();
         if index >= self.screen.slots.len() {
             return Ok(out);
@@ -865,20 +882,8 @@ impl PipeweaverHandler {
         let dial = renderer.dial_key(mix);
         if shown.dial != Some(dial) {
             let (x, y) = dial_origin();
-            if let Some(pack) = official::pack() {
-                // Official artwork: send the pre-rendered tile as-is, centred on the dial slot.
-                let (_, volume, meter) = dial;
-                // TODO: mute faces (official::Face::Muted etc.) need the mute state folded
-                // into `dial_key` so the cache redraws on mute changes; volume face only for now.
-                let face = official::Face::Volume;
-                let (dx, dy) = pack.centre_offset(layout::VOLUME_DIMENSIONS);
-                let px = (slot_x as i32 + x as i32 + dx).max(0) as u32;
-                let py = (slot_y as i32 + y as i32 + dy).max(0) as u32;
-                out.push(BeacnMessage::Image(px, py, pack.tile(face, volume, meter)));
-            } else {
-                let jpeg = renderer.get_volume(mix)?;
-                out.push(BeacnMessage::Image(slot_x + x, slot_y + y, jpeg));
-            }
+            let jpeg = renderer.get_volume(mix)?;
+            out.push(BeacnMessage::Image(slot_x + x, slot_y + y, jpeg));
             shown.dial = Some(dial);
         }
 
@@ -895,9 +900,224 @@ impl PipeweaverHandler {
         Ok(out)
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Official-look layout (BEACN default theme), used when the official kit is installed
+    // ---------------------------------------------------------------------------------------
+    async fn sync_display_official(&mut self) -> Result<()> {
+        let kit = official_screen::kit().ok_or_else(|| anyhow!("Official kit missing"))?;
+        let mut messages = Vec::new();
+
+        if !self.screen.header_drawn {
+            // The full background wipes everything, so every slot has to be redrawn
+            messages.push(BeacnMessage::Image(0, 0, kit.background()?));
+            self.screen.header_drawn = true;
+            self.screen.slots = Default::default();
+            self.screen.pill = None;
+            self.screen.dots = None;
+        }
+
+        let pill = match self.channel_type {
+            ChannelType::Source => Some(self.active_mix),
+            ChannelType::Target => None,
+        };
+        if self.screen.pill != Some(pill) {
+            let (x, y) = official_screen::PILL_POS;
+            messages.push(BeacnMessage::Image(x, y, kit.mix_pill(pill)?));
+            self.screen.pill = Some(pill);
+        }
+
+        let dots = (self.get_page_count().unwrap_or(1), self.active_page);
+        if self.screen.dots != Some(dots) {
+            let (x, y) = official_screen::DOTS_POS;
+            messages.push(BeacnMessage::Image(x, y, kit.page_dots(dots.0, dots.1)?));
+            self.screen.dots = Some(dots);
+        }
+
+        for index in 0..self.screen.slots.len() {
+            messages.extend(self.plan_slot_official(index, false)?);
+        }
+        for message in messages {
+            self.send_message(message).await?;
+        }
+        Ok(())
+    }
+
+    fn plan_slot_official(&mut self, index: usize, dial_only: bool) -> Result<Vec<BeacnMessage>> {
+        let mut out = Vec::new();
+        let Some(kit) = official_screen::kit() else {
+            return Ok(out);
+        };
+        let Some(pack) = official::pack() else {
+            return Ok(out);
+        };
+        if index >= self.screen.slots.len() {
+            return Ok(out);
+        }
+        let slot = index as u8;
+        let card_pos = (official_screen::CARD_X[index], official_screen::CARD_Y);
+        let button_pos = (official_screen::button_x(index), official_screen::BUTTON_Y);
+        let is_create = self.device_type == DeviceType::BeacnMixCreate;
+        let mix = self.active_mix;
+
+        // Gather everything that needs the daemon status before borrowing the screen model
+        let id = self.devices_shown.get(index).cloned();
+        let lines = id.as_deref().map(|id| self.official_lines(id)).unwrap_or_default();
+        let button_label = id.as_deref().map(|id| self.official_button_label(id));
+
+        let renderer = id.as_ref().and_then(|id| self.renderers.get(id));
+        let Some(renderer) = renderer else {
+            let shown = &mut self.screen.slots[index];
+            if !dial_only && shown.plate != Some(Plate::Blank) {
+                let card = self.pieces.get(&PieceKey::OfficialBlankCard { slot })?;
+                out.push(BeacnMessage::Image(card_pos.0, card_pos.1, card));
+                if is_create {
+                    let blank = self.pieces.get(&PieceKey::OfficialBlankButton { slot })?;
+                    out.push(BeacnMessage::Image(button_pos.0, button_pos.1, blank));
+                }
+                *shown = SlotShown {
+                    plate: Some(Plate::Blank),
+                    ..Default::default()
+                };
+            }
+            return Ok(out);
+        };
+
+        let is_source = renderer.channel_type == ChannelType::Source;
+        let a = &renderer.mute_states[MuteTarget::TargetA];
+        let b = &renderer.mute_states[MuteTarget::TargetB];
+        let face = official_screen::face_for(is_source, (a.is_active, a.is_mute_to_all), b.is_active, mix);
+        let card_key = PieceKey::OfficialCard {
+            slot,
+            title: renderer.title.clone(),
+            colour: [renderer.colour[0], renderer.colour[1], renderer.colour[2]],
+            lines,
+        };
+        let button_key = match (is_create, is_source) {
+            (true, true) => Some(PieceKey::OfficialButton {
+                slot,
+                label: button_label.unwrap_or_default(),
+                active: b.is_active,
+            }),
+            (true, false) => Some(PieceKey::OfficialBlankButton { slot }),
+            (false, _) => None,
+        };
+        let dial = renderer.dial_key(mix);
+
+        let shown = &mut self.screen.slots[index];
+        if !dial_only && shown.top.as_ref() != Some(&card_key) {
+            let jpeg = self.pieces.get(&card_key)?;
+            out.push(BeacnMessage::Image(card_pos.0, card_pos.1, jpeg));
+            // The card covers the dial, so it has to go back on top
+            shown.plate = Some(Plate::Tall);
+            shown.top = Some(card_key);
+            shown.dial = None;
+            shown.face = None;
+        }
+
+        if shown.dial != Some(dial) || shown.face != Some(face) {
+            let (_, volume, meter) = dial;
+            let (dx, dy) = pack.centre_offset((official_screen::CARD_W, official_screen::TILE_H));
+            let px = (card_pos.0 as i32 + dx).max(0) as u32;
+            let py = (card_pos.1 as i32 + dy).max(0) as u32;
+            out.push(BeacnMessage::Image(px, py, kit.tile(pack, face, volume, meter)));
+            shown.dial = Some(dial);
+            shown.face = Some(face);
+        }
+
+        if !dial_only
+            && let Some(key) = button_key
+            && shown.mute.as_ref() != Some(&key)
+        {
+            let jpeg = self.pieces.get(&key)?;
+            out.push(BeacnMessage::Image(button_pos.0, button_pos.1, jpeg));
+            shown.mute = Some(key);
+        }
+        Ok(out)
+    }
+
+    /// Up to two "what's in this channel" lines: attached hardware, then routed applications,
+    /// or the mix a virtual output carries.
+    fn official_lines(&self, id: &str) -> Vec<String> {
+        let mut lines: Vec<String> = Vec::new();
+        let mut push = |s: &str, lines: &mut Vec<String>| {
+            let s = s.trim();
+            if !s.is_empty() && !lines.iter().any(|l| l == s) {
+                lines.push(s.to_string());
+            }
+        };
+        let Ok(dev) = find_device(&self.raw_status, self.channel_type, id) else {
+            return lines;
+        };
+        if let Some(attached) = dev["attached_devices"].as_array() {
+            for d in attached {
+                if let Some(name) = d["description"].as_str().or_else(|| d["name"].as_str()) {
+                    push(name, &mut lines);
+                }
+            }
+        }
+        let kind = match self.channel_type {
+            ChannelType::Source => "Source",
+            ChannelType::Target => "Target",
+        };
+        if let Some(apps) = self.raw_status["audio"]["applications"][kind].as_object() {
+            for inner in apps.values().filter_map(|v| v.as_object()) {
+                for list in inner.values().filter_map(|v| v.as_array()) {
+                    for app in list {
+                        if app["target_id"].as_str() == Some(id)
+                            && let Some(name) = app["name"].as_str()
+                        {
+                            push(name, &mut lines);
+                        }
+                    }
+                }
+            }
+        }
+        if lines.is_empty()
+            && self.channel_type == ChannelType::Target
+            && let Some(mix) = dev["mix"].as_str()
+        {
+            push(&format!("Mix {mix}"), &mut lines);
+        }
+        lines.truncate(2);
+        lines
+    }
+
+    /// Label for a source's Mix Create button (its "Mute B" target): the target's name when it
+    /// mutes to a single output (e.g. "AUDIENCE"), otherwise MUTE ALL / MUTE (n).
+    fn official_button_label(&self, id: &str) -> String {
+        let Ok(dev) = find_device(&self.raw_status, ChannelType::Source, id) else {
+            return "MUTE".into();
+        };
+        let targets: Vec<&str> = dev["mute_states"]["mute_targets"]["TargetB"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        match targets.as_slice() {
+            [] => "MUTE ALL".into(),
+            [one] => find_device(&self.raw_status, ChannelType::Target, one)
+                .ok()
+                .and_then(|t| t["description"]["name"].as_str())
+                .map(|n| n.to_uppercase())
+                .unwrap_or_else(|| "MUTE".into()),
+            many => format!("MUTE ({})", many.len()),
+        }
+    }
+
     // Renders every piece any channel could show (on any page, Source or Target), then drops
     // anything nothing can produce any more. Anything already rendered is skipped.
     fn warm_pieces(&mut self) {
+        if official_screen::kit().is_some() {
+            // Official pieces are cheap and keyed per slot: keep just what is on screen.
+            let live: HashSet<PieceKey> = self
+                .screen
+                .slots
+                .iter()
+                .flat_map(|s| [s.top.clone(), s.mute.clone()])
+                .flatten()
+                .collect();
+            self.pieces.retain_live(&live);
+            return;
+        }
         let mut keys: Vec<PieceKey> = self
             .renderers
             .values()
