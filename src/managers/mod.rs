@@ -12,6 +12,9 @@ pub mod login;
 #[cfg(target_os = "linux")]
 pub mod tray;
 
+#[cfg(target_os = "linux")]
+pub mod pipeweaver_supervisor;
+
 #[derive(Debug)]
 #[allow(unused)]
 pub enum LoginEventTriggers {

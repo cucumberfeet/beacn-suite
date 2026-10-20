@@ -67,7 +67,7 @@ beacn-lib = { git = "https://github.com/beacn-on-linux/beacn-lib.git", tag = "v0
 #beacn-lib = { path = "../beacn-lib", features = ["tokio"] }
 
 # Async Runtime
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "signal", "macros"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "signal", "macros", "process", "time"] }
 
 # UI Framework (iced)
 iced = { version = "0.14.0", features = ["tokio", "advanced", "svg", "canvas"] }
@@ -107,6 +107,9 @@ web-sys = "0.3"
 [target.'cfg(target_os = "linux")'.dependencies]
 # Apature Science Handheld Portal Device (autostart / background)
 ashpd = { version = "0.13.13", features = ["tokio", "raw_handle", "background"] }
+
+# Pipeweaver supervision (prctl / kill)
+libc = "0.2"
 
 # Tray Handler
 ksni = { version = "0.3.6", features = ["blocking"] }

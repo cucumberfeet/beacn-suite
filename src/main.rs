@@ -39,7 +39,7 @@ mod quit_notify {
 
 const APP_TLD: &str = "io.github.beacn_on_linux";
 const APP_NAME: &str = "beacn-utility";
-const APP_TITLE: &str = "Beacn Utility";
+const APP_TITLE: &str = "Beacn";
 const ICON: &[u8] = include_bytes!("../resources/icons/beacn-utility-large.png");
 
 #[derive(Parser, Debug)]
@@ -51,6 +51,10 @@ pub struct Args {
     /// Launch in the background, without opening the UI
     #[arg(long, alias = "startup")]
     pub background: bool,
+
+    /// Also run Pipeweaver's daemon (audio routing) as part of this app, without its own tray icon
+    #[arg(long)]
+    pub with_pipeweaver: bool,
 }
 
 #[tokio::main]
@@ -186,6 +190,21 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Optionally run Pipeweaver as part of this app (one service, one tray)
+    #[cfg_attr(not(target_os = "linux"), allow(unused))]
+    let (pw_tx, pw_rx) = unbounded::<ManagerMessages>();
+    #[cfg_attr(not(target_os = "linux"), allow(unused))]
+    let with_pipeweaver = args.with_pipeweaver;
+    let pipeweaver = task::spawn(async move {
+        #[cfg(target_os = "linux")]
+        {
+            use managers::pipeweaver_supervisor::{enabled, supervise};
+            if enabled(with_pipeweaver) {
+                supervise(pw_rx).await;
+            }
+        }
+    });
+
     // Ok, we need to spawn up the device manager, first lets create some channels
     // The first channel is for us to be able to tell the manager to shut down, or reconfigure
     let (manage_tx, manage_rx) = unbounded();
@@ -223,9 +242,10 @@ async fn main() -> Result<()> {
     let _ = manage_tx.send(ManagerMessages::Quit);
     let _ = ipc_tx.send(ManagerMessages::Quit);
     let _ = tray_tx.send(ManagerMessages::Quit);
+    let _ = pw_tx.send(ManagerMessages::Quit);
 
     // Join on the remaining tasks
-    let _ = join!(signal, ipc, tray, device_manager);
+    let _ = join!(signal, ipc, tray, device_manager, pipeweaver);
 
     debug!("Shutdown Complete");
 

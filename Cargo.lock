@@ -494,6 +494,7 @@ dependencies = [
  "interprocess",
  "json-patch",
  "ksni",
+ "libc",
  "log",
  "log-panics",
  "num-complex",

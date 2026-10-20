@@ -11,6 +11,7 @@ use std::{env, fs};
 
 enum TrayMessages {
     Activate,
+    OpenMixer,
     OpenLogs,
     Quit,
 }
@@ -58,6 +59,13 @@ pub async fn handle_tray(
                 match msg {
                     Ok(TrayMessages::Activate) => {
                         let _ = tray_main_tx.send(WindowMessage::OpenWindow);
+                    }
+
+                    Ok(TrayMessages::OpenMixer) => {
+                        if !crate::integrations::pipeweaver::launch_pipeweaver_ui() {
+                            // Mixer isn't reachable, show the device window instead
+                            let _ = tray_main_tx.send(WindowMessage::OpenWindow);
+                        }
                     }
 
                     Ok(TrayMessages::OpenLogs) => {
@@ -163,7 +171,7 @@ impl Tray for TrayIcon {
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             title: String::from(APP_TITLE),
-            description: String::from("A Tool for Configuring Beacn Devices"),
+            description: String::from("Beacn devices and audio mixer"),
             ..Default::default()
         }
     }
@@ -171,9 +179,17 @@ impl Tray for TrayIcon {
     fn menu(&self) -> Vec<MenuItem<Self>> {
         vec![
             StandardItem {
-                label: String::from("Show"),
+                label: String::from("Devices"),
                 activate: Box::new(|this: &mut TrayIcon| {
                     let _ = this.tx.try_send(TrayMessages::Activate);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: String::from("Mixer"),
+                activate: Box::new(|this: &mut TrayIcon| {
+                    let _ = this.tx.try_send(TrayMessages::OpenMixer);
                 }),
                 ..Default::default()
             }
