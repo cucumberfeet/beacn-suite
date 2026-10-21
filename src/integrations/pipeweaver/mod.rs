@@ -990,8 +990,12 @@ impl PipeweaverHandler {
         let is_source = renderer.channel_type == ChannelType::Source;
         let a = &renderer.mute_states[MuteTarget::TargetA];
         let b = &renderer.mute_states[MuteTarget::TargetB];
-        let face =
-            official_screen::face_for(is_source, (a.is_active, a.is_mute_to_all), b.is_active, mix);
+        let face = official_screen::face_for(
+            is_source,
+            (a.is_active, a.is_mute_to_all),
+            (b.is_active, b.is_mute_to_all),
+            mix,
+        );
         let card_key = PieceKey::OfficialCard {
             slot,
             title: renderer.title.clone(),

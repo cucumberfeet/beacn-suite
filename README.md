@@ -28,7 +28,10 @@ pieces in subfolders. The upstream README is kept as [UPSTREAM_README.md](UPSTRE
   per source, so the button reads AUDIENCE and mutes only the stream. Handled sources are
   remembered in `~/.config/beacn-utility/audience-defaults.json`; if you later clear a
   source's Mute B targets on purpose, it stays MUTE ALL. Set `BEACN_NO_AUDIENCE_DEFAULT=1`
-  to turn this off.
+  to turn this off. When a MUTE ALL button is active the button turns red and the dial shows
+  the official muted tile, since the channel is muted everywhere; an active AUDIENCE button
+  turns red and shows the stream-muted tile only while you view Mix B. Pressing a dial is the
+  separate personal mute (Mute A).
 - **One app instead of two:**
   - **One service:** `beacn.service` runs `beacn-utility --background --with-pipeweaver`.
     beacn-utility starts `pipeweaver-daemon --background --no-tray` as a supervised child,

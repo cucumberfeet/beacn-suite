@@ -455,14 +455,19 @@ pub fn kit() -> Option<&'static ScreenKit> {
 }
 
 /// Which official dial face shows for a channel, given the mix being viewed.
-pub fn face_for(is_source: bool, mute_a: (bool, bool), mute_b: bool, mix: Mix) -> Face {
+/// Which official tile face a channel shows. `mute_a` / `mute_b` are (active, mutes to all).
+/// A Mute with no targets in Pipeweaver mutes the channel everywhere, so either mute that is
+/// active *and* to-all shows the Muted face (on Mix Create that's the MUTE ALL button); a
+/// targeted Mute B (AUDIENCE) only shows StreamMuted while viewing Mix B.
+pub fn face_for(is_source: bool, mute_a: (bool, bool), mute_b: (bool, bool), mix: Mix) -> Face {
     let (a_active, a_to_all) = mute_a;
+    let (b_active, b_to_all) = mute_b;
     if !is_source {
         return if a_active { Face::Muted } else { Face::Volume };
     }
-    if a_active && (a_to_all || mix == Mix::A) {
+    if (a_active && (a_to_all || mix == Mix::A)) || (b_active && b_to_all) {
         Face::Muted
-    } else if mute_b && mix == Mix::B {
+    } else if b_active && mix == Mix::B {
         Face::StreamMuted
     } else {
         Face::Volume
@@ -554,15 +559,39 @@ mod tests {
 
     #[test]
     fn face_rules() {
-        assert_eq!(face_for(true, (true, true), false, Mix::B), Face::Muted);
-        assert_eq!(face_for(true, (true, false), false, Mix::A), Face::Muted);
-        assert_eq!(face_for(true, (true, false), false, Mix::B), Face::Volume);
         assert_eq!(
-            face_for(true, (false, false), true, Mix::B),
+            face_for(true, (true, true), (false, false), Mix::B),
+            Face::Muted
+        );
+        assert_eq!(
+            face_for(true, (true, false), (false, false), Mix::A),
+            Face::Muted
+        );
+        assert_eq!(
+            face_for(true, (true, false), (false, false), Mix::B),
+            Face::Volume
+        );
+        assert_eq!(
+            face_for(true, (false, false), (true, false), Mix::B),
             Face::StreamMuted
         );
-        assert_eq!(face_for(true, (false, false), true, Mix::A), Face::Volume);
-        assert_eq!(face_for(false, (true, true), false, Mix::A), Face::Muted);
+        assert_eq!(
+            face_for(true, (false, false), (true, false), Mix::A),
+            Face::Volume
+        );
+        assert_eq!(
+            face_for(false, (true, true), (false, false), Mix::A),
+            Face::Muted
+        );
+        // MUTE ALL (Mute B with no targets) mutes everywhere, whichever mix is shown
+        assert_eq!(
+            face_for(true, (false, false), (true, true), Mix::A),
+            Face::Muted
+        );
+        assert_eq!(
+            face_for(true, (false, false), (true, true), Mix::B),
+            Face::Muted
+        );
     }
 
     #[test]
@@ -603,7 +632,7 @@ mod tests {
                     lines: s(vec!["Brave"]),
                     volume: 63,
                     meter: 0,
-                    face: face_for(true, (true, true), false, mix),
+                    face: face_for(true, (true, true), (false, false), mix),
                     button: Some(("AUDIENCE", false)),
                 }),
                 Some(PreviewSlot {
@@ -612,7 +641,7 @@ mod tests {
                     lines: s(vec!["Spotify"]),
                     volume: if mix == Mix::A { 41 } else { 20 },
                     meter: 80,
-                    face: face_for(true, (false, false), true, mix),
+                    face: face_for(true, (false, false), (true, false), mix),
                     button: Some(("AUDIENCE", true)),
                 }),
                 Some(PreviewSlot {
@@ -676,7 +705,7 @@ mod tests {
                 lines: s(vec!["AORUS FV43U"]),
                 volume: 35,
                 meter: 20,
-                face: face_for(false, (true, true), false, Mix::A),
+                face: face_for(false, (true, true), (false, false), Mix::A),
                 button: None,
             }),
             Some(PreviewSlot {
