@@ -262,9 +262,11 @@ where
     ) {
         let is_over = cursor.is_over(layout.bounds());
 
-        // Close when clicking outside the popup content.
+        // Close when clicking outside the popup content. A click on the trigger is left to
+        // the trigger itself, so a toggling trigger closes the popup instead of reopening it.
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
             && !is_over
+            && !cursor.is_over(self.trigger_bounds)
         {
             if let Some(message) = self.on_close.clone() {
                 shell.publish(message);

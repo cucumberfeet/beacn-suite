@@ -55,6 +55,10 @@ pub struct Args {
     /// Also run Pipeweaver's daemon (audio routing) as part of this app, without its own tray icon
     #[arg(long)]
     pub with_pipeweaver: bool,
+
+    /// Open the window on the Mixer page (passed on to an already running instance)
+    #[arg(long)]
+    pub mixer: bool,
 }
 
 #[tokio::main]
@@ -142,7 +146,9 @@ async fn main() -> Result<()> {
 
     // Firstly, create a message bus which allows threads to message back to here
     let (window_tx, window_rx) = unbounded();
-    if !args.background {
+    if args.mixer {
+        window_tx.send(WindowMessage::OpenMixer)?;
+    } else if !args.background {
         window_tx.send(WindowMessage::OpenWindow)?;
     }
 
@@ -150,7 +156,7 @@ async fn main() -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use crate::managers::ipc::handle_active_instance;
-        if handle_active_instance().await {
+        if handle_active_instance(args.mixer).await {
             return Ok(());
         }
     }
@@ -501,5 +507,6 @@ pub enum ManagerMessages {
 // needs to maintain anything special, or can just wait for the window to close.
 pub enum WindowMessage {
     OpenWindow,
+    OpenMixer,
     Quit,
 }
