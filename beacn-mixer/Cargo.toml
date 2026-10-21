@@ -1,0 +1,15 @@
+[package]
+name = "beacn-mixer"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Native window for the Beacn audio mixer (Pipeweaver web UI) - replaces the Brave app window"
+
+[dependencies]
+gtk = "0.18"
+glib = "0.18"
+webkit2gtk = { version = "2.0", features = ["v2_40"] }
+
+[profile.release]
+lto = "thin"
+strip = true
