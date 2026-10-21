@@ -491,6 +491,7 @@ impl PipeweaverHandler {
     ) -> Result<()> {
         let mut keep_alive = time::interval(Duration::from_secs(10));
         self.send_message(BeacnMessage::Enabled(true)).await?;
+        self.apply_audience_defaults(stream).await;
 
         let mut last_channel_count = 0;
 
@@ -550,6 +551,7 @@ impl PipeweaverHandler {
                                 // Update the raw status for the change
                                 let patch: Patch = from_value(result["data"]["Patch"].clone())?;
                                 json_patch::patch(&mut self.raw_status, &patch)?;
+                                self.apply_audience_defaults(stream).await;
 
                                 // Count all channels that aren't hidden
                                 let count = {
@@ -1055,11 +1057,10 @@ impl PipeweaverHandler {
                 }
             }
         }
-        let kind = match self.channel_type {
-            ChannelType::Source => "Source",
-            ChannelType::Target => "Target",
-        };
-        if let Some(apps) = self.raw_status["audio"]["applications"][kind].as_object() {
+        // Playback apps (which feed our Source channels) are listed under "Target" and recording
+        // apps under "Source", so look through every kind and match on the channel id.
+        let kinds = self.raw_status["audio"]["applications"].as_object().cloned().unwrap_or_default();
+        for apps in kinds.values().filter_map(|v| v.as_object()) {
             for inner in apps.values().filter_map(|v| v.as_object()) {
                 for list in inner.values().filter_map(|v| v.as_array()) {
                     for app in list {
@@ -1080,6 +1081,82 @@ impl PipeweaverHandler {
         }
         lines.truncate(2);
         lines
+    }
+
+    /// Mix Create: the official BEACN "AUDIENCE" button mutes a channel for the stream only.
+    /// Pipeweaver's Mute B with no targets mutes to *everything* (so the button reads MUTE ALL).
+    /// When the profile has exactly one output carrying Mix B (the stream/Audience mix), point
+    /// each source's Mute B at it, once per source. Sources already handled are remembered in
+    /// ~/.config/beacn-utility/audience-defaults.json, so if you later clear a source's Mute B
+    /// targets on purpose (to get MUTE ALL back) it is left alone. Not applied to a source whose
+    /// Mute B is currently active, and disabled entirely with BEACN_NO_AUDIENCE_DEFAULT=1.
+    async fn apply_audience_defaults(&mut self, stream: &mut WebSocket) {
+        if let Err(e) = self.apply_audience_defaults_inner(stream).await {
+            warn!("Audience button defaults not applied: {e}");
+        }
+    }
+
+    async fn apply_audience_defaults_inner(&mut self, stream: &mut WebSocket) -> Result<()> {
+        if self.device_type != DeviceType::BeacnMixCreate
+            || std::env::var("BEACN_NO_AUDIENCE_DEFAULT").is_ok_and(|v| !v.is_empty() && v != "0")
+        {
+            return Ok(());
+        }
+        let devices = &self.raw_status["audio"]["profile"]["devices"];
+        let kinds = ["physical_devices", "virtual_devices"];
+        let audience: Vec<String> = kinds
+            .iter()
+            .filter_map(|k| devices["targets"][k].as_array())
+            .flatten()
+            .filter(|t| t["mix"].as_str() == Some("B"))
+            .filter_map(|t| t["description"]["id"].as_str().map(String::from))
+            .collect();
+        let [audience] = audience.as_slice() else {
+            return Ok(());
+        };
+        let mut wanted = Vec::new();
+        for source in kinds.iter().filter_map(|k| devices["sources"][k].as_array()).flatten() {
+            let Some(id) = source["description"]["id"].as_str() else {
+                continue;
+            };
+            let mute = &source["mute_states"];
+            let empty = mute["mute_targets"]["TargetB"].as_array().is_some_and(|a| a.is_empty());
+            let active = mute["mute_state"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|v| v.as_str() == Some("TargetB")));
+            if empty && !active {
+                wanted.push(id.to_string());
+            }
+        }
+        if wanted.is_empty() {
+            return Ok(());
+        }
+
+        let file = crate::get_config_path()?.join("audience-defaults.json");
+        let mut done: HashSet<String> = std::fs::read_to_string(&file)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let mut changed = false;
+        for id in wanted {
+            if done.contains(&id) {
+                continue;
+            }
+            info!("Mix Create: pointing Audience button (Mute B) of {id} at the Mix B output");
+            let command = json!({
+                "id": self.get_command_index(),
+                "data": { "Pipewire": { "AddMuteTargetNode": [id, "TargetB", audience] } },
+            });
+            stream
+                .send(Message::Text(Utf8Bytes::from(serde_json::to_string(&command)?)))
+                .await?;
+            done.insert(id);
+            changed = true;
+        }
+        if changed {
+            std::fs::write(&file, serde_json::to_string_pretty(&done)?)?;
+        }
+        Ok(())
     }
 
     /// Label for a source's Mix Create button (its "Mute B" target): the target's name when it
@@ -1301,6 +1378,10 @@ impl PipeweaverHandler {
     }
 
     async fn send_message(&self, message: BeacnMessage) -> Result<()> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let BeacnMessage::Image(x, y, jpeg) = &message {
+            screen_mirror(*x, *y, jpeg);
+        }
         let (tx, rx) = oneshot::channel();
         let msg = ControlMessage::Handle(message, tx);
         self.sender.send_async(msg).await?;
@@ -1735,4 +1816,31 @@ fn find_device<'a>(
         .flatten()
         .find(|value| value["description"]["id"].as_str() == Some(device))
         .ok_or_else(|| anyhow!("Failed to locate device by ID: {}", device))
+}
+
+
+/// Debug aid: with BEACN_SCREEN_MIRROR=/path/file.png set, every image sent to the device is
+/// also pasted into an 800x480 copy of the screen, saved to that file (and logged), so what
+/// the hardware *should* be showing can be inspected on the PC.
+#[cfg(not(target_arch = "wasm32"))]
+fn screen_mirror(x: u32, y: u32, jpeg: &[u8]) {
+    use std::sync::Mutex;
+    static MIRROR: LazyLock<Option<(std::path::PathBuf, Mutex<RgbaImage>)>> = LazyLock::new(|| {
+        std::env::var_os("BEACN_SCREEN_MIRROR")
+            .map(|p| (std::path::PathBuf::from(p), Mutex::new(RgbaImage::new(800, 480))))
+    });
+    let Some((path, canvas)) = MIRROR.as_ref() else {
+        return;
+    };
+    match image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg) {
+        Ok(img) => {
+            let img = img.to_rgba8();
+            debug!("Screen image at {x},{y} size {}x{}", img.width(), img.height());
+            if let Ok(mut c) = canvas.lock() {
+                image::imageops::replace(&mut *c, &img, x as i64, y as i64);
+                let _ = c.save(path);
+            }
+        }
+        Err(e) => warn!("Screen mirror: undecodable image at {x},{y}: {e}"),
+    }
 }

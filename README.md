@@ -21,6 +21,14 @@ pieces in subfolders. The upstream README is kept as [UPSTREAM_README.md](UPSTRE
   buttons, the Mix A / Mix B toggle, page dots for more than four channels, and the boot logo.
   Uses the artwork kit you generate locally (see below); without a kit, the stock
   beacn-utility screen is used.
+- **Real AUDIENCE buttons on the Mix Create:** the official button mutes a channel for the
+  stream only. In Pipeweaver, a source's Mute B with no targets mutes it *everywhere* (the
+  button then reads MUTE ALL). When the profile has exactly one output carrying Mix B (e.g.
+  "Audience"), beacn-utility points each source's empty, inactive Mute B at that output, once
+  per source, so the button reads AUDIENCE and mutes only the stream. Handled sources are
+  remembered in `~/.config/beacn-utility/audience-defaults.json`; if you later clear a
+  source's Mute B targets on purpose, it stays MUTE ALL. Set `BEACN_NO_AUDIENCE_DEFAULT=1`
+  to turn this off.
 - **One app instead of two:**
   - **One service:** `beacn.service` runs `beacn-utility --background --with-pipeweaver`.
     beacn-utility starts `pipeweaver-daemon --background --no-tray` as a supervised child,
@@ -107,6 +115,20 @@ It then points beacn-utility at it via `~/.config/beacn-utility/official-artwork
 The lower-level tools are `tools/extract-beacn-installer.py` and `tools/make-official-kit.py`.
 
 **Do not share or commit the generated kit or extracted files.** `.gitignore` excludes them.
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `BEACN_OFFICIAL_ARTWORK`, `BEACN_OFFICIAL_SCREEN` | Override the artwork pack / screen kit paths |
+| `BEACN_WITH_PIPEWEAVER=1` | Same as `--with-pipeweaver` (supervise the Pipeweaver daemon) |
+| `BEACN_PIPEWEAVER_DAEMON` | Path to `pipeweaver-daemon` (default: next to beacn-utility, then `$PATH`) |
+| `BEACN_NO_AUDIENCE_DEFAULT=1` | Don't point empty Mute B targets at the Mix B output (keep MUTE ALL) |
+| `BEACN_SCREEN_MIRROR=/path/screen.png` | Debug: also paste every image sent to the device screen into an 800x480 PNG at that path, and log each image's position and size. Re-encodes the PNG on every update, so leave it off normally |
+| `PIPEWEAVER_NO_TRAY=1` | (daemon, patched) same as `--no-tray` |
+
+To try the mirror with the service: `systemctl --user edit beacn` and add
+`[Service]` / `Environment=BEACN_SCREEN_MIRROR=%t/beacn-mirror.png`, then restart.
 
 ## Rollback
 
