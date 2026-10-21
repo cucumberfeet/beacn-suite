@@ -1,2 +1,30 @@
 /target
 ./.idea
+
+# --- beacn-suite ---
+# Build outputs and bundles (never commit prebuilt binaries or tarballs)
+/build/
+/dist/
+/beacn-mixer/target/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rpm
+*.deb
+*.AppImage
+
+# BEACN's proprietary files: the installer, anything extracted from it, and generated kits.
+# These must stay on the user's own machine and are never redistributed.
+*.exe
+*.msi
+*.cab
+*.dll
+*.images
+MixImages/
+screen-default/
+screen-*/
+beacn-official/
+kit.json
+previews/
