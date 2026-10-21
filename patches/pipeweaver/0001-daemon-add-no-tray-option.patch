@@ -1,0 +1,49 @@
+From 5b23219dfc01ee50185b6189c4175b7936f6963c Mon Sep 17 00:00:00 2001
+From: cucumberfeet <116314769+cucumberfeet@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 15:24:06 -0400
+Subject: [PATCH] daemon: --no-tray / PIPEWEAVER_NO_TRAY (private fork, not for
+ upstream)
+
+---
+ daemon/src/main.rs | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/daemon/src/main.rs b/daemon/src/main.rs
+index 4178deb..d42b9c6 100644
+--- a/daemon/src/main.rs
++++ b/daemon/src/main.rs
+@@ -46,6 +46,11 @@ pub struct Args {
+     /// Launch without starting the UI
+     #[arg(long, alias = "startup")]
+     pub background: bool,
++
++    /// Don't show a tray icon (for when another app, such as the Beacn Utility,
++    /// supervises the daemon and provides the tray). Also enabled by PIPEWEAVER_NO_TRAY=1.
++    #[arg(long)]
++    pub no_tray: bool,
+ }
+ 
+ #[tokio::main]
+@@ -176,7 +181,18 @@ async fn main() -> Result<()> {
+         let _ = rx.await;
+     }
+ 
+-    let tray_icon = task::spawn(spawn_tray(shutdown.clone(), manager_send.clone()));
++    let no_tray = args.no_tray
++        || std::env::var("PIPEWEAVER_NO_TRAY").is_ok_and(|v| !v.is_empty() && v != "0");
++    let tray_shutdown = shutdown.clone();
++    let tray_sender = manager_send.clone();
++    let tray_icon = task::spawn(async move {
++        if no_tray {
++            info!("Tray icon disabled");
++            Ok(())
++        } else {
++            spawn_tray(tray_shutdown, tray_sender).await
++        }
++    });
+     let runtime = task::spawn(spawn_runtime(shutdown.clone()));
+ 
+     // Wait for a Shutdown Trigger
+-- 
+2.47.3
+
