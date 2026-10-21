@@ -963,7 +963,10 @@ impl PipeweaverHandler {
 
         // Gather everything that needs the daemon status before borrowing the screen model
         let id = self.devices_shown.get(index).cloned();
-        let lines = id.as_deref().map(|id| self.official_lines(id)).unwrap_or_default();
+        let lines = id
+            .as_deref()
+            .map(|id| self.official_lines(id))
+            .unwrap_or_default();
         let button_label = id.as_deref().map(|id| self.official_button_label(id));
 
         let renderer = id.as_ref().and_then(|id| self.renderers.get(id));
@@ -987,7 +990,8 @@ impl PipeweaverHandler {
         let is_source = renderer.channel_type == ChannelType::Source;
         let a = &renderer.mute_states[MuteTarget::TargetA];
         let b = &renderer.mute_states[MuteTarget::TargetB];
-        let face = official_screen::face_for(is_source, (a.is_active, a.is_mute_to_all), b.is_active, mix);
+        let face =
+            official_screen::face_for(is_source, (a.is_active, a.is_mute_to_all), b.is_active, mix);
         let card_key = PieceKey::OfficialCard {
             slot,
             title: renderer.title.clone(),
@@ -1021,7 +1025,11 @@ impl PipeweaverHandler {
             let (dx, dy) = pack.centre_offset((official_screen::CARD_W, official_screen::TILE_H));
             let px = (card_pos.0 as i32 + dx).max(0) as u32;
             let py = (card_pos.1 as i32 + dy).max(0) as u32;
-            out.push(BeacnMessage::Image(px, py, kit.tile(pack, face, volume, meter)));
+            out.push(BeacnMessage::Image(
+                px,
+                py,
+                kit.tile(pack, face, volume, meter),
+            ));
             shown.dial = Some(dial);
             shown.face = Some(face);
         }
@@ -1041,7 +1049,7 @@ impl PipeweaverHandler {
     /// or the mix a virtual output carries.
     fn official_lines(&self, id: &str) -> Vec<String> {
         let mut lines: Vec<String> = Vec::new();
-        let mut push = |s: &str, lines: &mut Vec<String>| {
+        let push = |s: &str, lines: &mut Vec<String>| {
             let s = s.trim();
             if !s.is_empty() && !lines.iter().any(|l| l == s) {
                 lines.push(s.to_string());
@@ -1059,7 +1067,10 @@ impl PipeweaverHandler {
         }
         // Playback apps (which feed our Source channels) are listed under "Target" and recording
         // apps under "Source", so look through every kind and match on the channel id.
-        let kinds = self.raw_status["audio"]["applications"].as_object().cloned().unwrap_or_default();
+        let kinds = self.raw_status["audio"]["applications"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         for apps in kinds.values().filter_map(|v| v.as_object()) {
             for inner in apps.values().filter_map(|v| v.as_object()) {
                 for list in inner.values().filter_map(|v| v.as_array()) {
@@ -1115,12 +1126,18 @@ impl PipeweaverHandler {
             return Ok(());
         };
         let mut wanted = Vec::new();
-        for source in kinds.iter().filter_map(|k| devices["sources"][k].as_array()).flatten() {
+        for source in kinds
+            .iter()
+            .filter_map(|k| devices["sources"][k].as_array())
+            .flatten()
+        {
             let Some(id) = source["description"]["id"].as_str() else {
                 continue;
             };
             let mute = &source["mute_states"];
-            let empty = mute["mute_targets"]["TargetB"].as_array().is_some_and(|a| a.is_empty());
+            let empty = mute["mute_targets"]["TargetB"]
+                .as_array()
+                .is_some_and(|a| a.is_empty());
             let active = mute["mute_state"]
                 .as_array()
                 .is_some_and(|a| a.iter().any(|v| v.as_str() == Some("TargetB")));
@@ -1148,7 +1165,9 @@ impl PipeweaverHandler {
                 "data": { "Pipewire": { "AddMuteTargetNode": [id, "TargetB", audience] } },
             });
             stream
-                .send(Message::Text(Utf8Bytes::from(serde_json::to_string(&command)?)))
+                .send(Message::Text(Utf8Bytes::from(serde_json::to_string(
+                    &command,
+                )?)))
                 .await?;
             done.insert(id);
             changed = true;
@@ -1818,7 +1837,6 @@ fn find_device<'a>(
         .ok_or_else(|| anyhow!("Failed to locate device by ID: {}", device))
 }
 
-
 /// Debug aid: with BEACN_SCREEN_MIRROR=/path/file.png set, every image sent to the device is
 /// also pasted into an 800x480 copy of the screen, saved to that file (and logged), so what
 /// the hardware *should* be showing can be inspected on the PC.
@@ -1826,8 +1844,12 @@ fn find_device<'a>(
 fn screen_mirror(x: u32, y: u32, jpeg: &[u8]) {
     use std::sync::Mutex;
     static MIRROR: LazyLock<Option<(std::path::PathBuf, Mutex<RgbaImage>)>> = LazyLock::new(|| {
-        std::env::var_os("BEACN_SCREEN_MIRROR")
-            .map(|p| (std::path::PathBuf::from(p), Mutex::new(RgbaImage::new(800, 480))))
+        std::env::var_os("BEACN_SCREEN_MIRROR").map(|p| {
+            (
+                std::path::PathBuf::from(p),
+                Mutex::new(RgbaImage::new(800, 480)),
+            )
+        })
     });
     let Some((path, canvas)) = MIRROR.as_ref() else {
         return;
@@ -1835,7 +1857,11 @@ fn screen_mirror(x: u32, y: u32, jpeg: &[u8]) {
     match image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg) {
         Ok(img) => {
             let img = img.to_rgba8();
-            debug!("Screen image at {x},{y} size {}x{}", img.width(), img.height());
+            debug!(
+                "Screen image at {x},{y} size {}x{}",
+                img.width(),
+                img.height()
+            );
             if let Ok(mut c) = canvas.lock() {
                 image::imageops::replace(&mut *c, &img, x as i64, y as i64);
                 let _ = c.save(path);

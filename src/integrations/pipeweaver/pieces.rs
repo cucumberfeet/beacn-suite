@@ -147,11 +147,20 @@ pub(crate) fn render_piece(key: &PieceKey) -> Result<Jpeg> {
     let img = match key {
         PieceKey::Top { colour, title } => render_top(rgba(*colour), title),
         PieceKey::Mute { kind, colour, a, b } => render_mute(*kind, rgba(*colour), *a, *b),
-        PieceKey::OfficialCard { slot, title, colour, lines } => {
+        PieceKey::OfficialCard {
+            slot,
+            title,
+            colour,
+            lines,
+        } => {
             return official()?.card(*slot as usize, title, *colour, lines);
         }
         PieceKey::OfficialBlankCard { slot } => return official()?.blank_card(*slot as usize),
-        PieceKey::OfficialButton { slot, label, active } => {
+        PieceKey::OfficialButton {
+            slot,
+            label,
+            active,
+        } => {
             return official()?.button(*slot as usize, label, *active);
         }
         PieceKey::OfficialBlankButton { slot } => return official()?.blank_button(*slot as usize),

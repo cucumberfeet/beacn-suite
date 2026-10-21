@@ -27,6 +27,7 @@ use std::sync::{Arc, OnceLock};
 pub type Jpeg = Arc<Vec<u8>>;
 
 // ---- Geometry (absolute screen pixels, 800x480) ----
+#[allow(dead_code)]
 pub const SCREEN: (u32, u32) = (800, 480);
 pub const CARD_X: [u32; 4] = [12, 208, 405, 601];
 pub const CARD_Y: u32 = 111;
@@ -69,7 +70,11 @@ const BUTTON_SIZE: f32 = 14.0;
 fn font(bold: bool) -> &'static Font {
     static B: OnceLock<Font> = OnceLock::new();
     static R: OnceLock<Font> = OnceLock::new();
-    let (cell, bytes) = if bold { (&B, ROBOTO_BOLD) } else { (&R, ROBOTO_REGULAR) };
+    let (cell, bytes) = if bold {
+        (&B, ROBOTO_BOLD)
+    } else {
+        (&R, ROBOTO_REGULAR)
+    };
     cell.get_or_init(|| Font::from_bytes(bytes, fontdue::FontSettings::default()).expect("font"))
 }
 
@@ -91,7 +96,9 @@ pub struct ScreenKit {
 
 fn load_rgba(dir: &Path, name: &str) -> Result<RgbaImage> {
     let p = dir.join(name);
-    Ok(image::open(&p).with_context(|| format!("loading {}", p.display()))?.to_rgba8())
+    Ok(image::open(&p)
+        .with_context(|| format!("loading {}", p.display()))?
+        .to_rgba8())
 }
 
 impl ScreenKit {
@@ -102,7 +109,8 @@ impl ScreenKit {
         let zero = std::fs::read(dir.join("zero.jpg")).context("zero.jpg")?;
         Ok(Self {
             base: image::DynamicImage::ImageRgba8(base).to_rgb8(),
-            splash: load_rgba(dir, "splash.png").map(|i| image::DynamicImage::ImageRgba8(i).to_rgb8())?,
+            splash: load_rgba(dir, "splash.png")
+                .map(|i| image::DynamicImage::ImageRgba8(i).to_rgb8())?,
             card: load_rgba(dir, "card.png")?,
             band: load_rgba(dir, "band.png")?,
             button_on: load_rgba(dir, "button_on.png")?,
@@ -118,7 +126,8 @@ impl ScreenKit {
     }
 
     fn region(&self, x: u32, y: u32, w: u32, h: u32) -> RgbaImage {
-        image::DynamicImage::ImageRgb8(imageops::crop_imm(&self.base, x, y, w, h).to_image()).to_rgba8()
+        image::DynamicImage::ImageRgb8(imageops::crop_imm(&self.base, x, y, w, h).to_image())
+            .to_rgba8()
     }
 
     /// The full background (texture + BEACN header), sent once per full redraw.
@@ -131,7 +140,17 @@ impl ScreenKit {
         let mut img = image::DynamicImage::ImageRgb8(self.splash.clone()).to_rgba8();
         if let Some(text) = status {
             let (x, y) = STATUS_POS;
-            draw_text_centered(&mut img, text, x, y, STATUS_SIZE.0, STATUS_SIZE.1, true, 22.0, STATUS_COLOUR);
+            draw_text_centered(
+                &mut img,
+                text,
+                x,
+                y,
+                STATUS_SIZE.0,
+                STATUS_SIZE.1,
+                true,
+                22.0,
+                STATUS_COLOUR,
+            );
         }
         encode_rgba(&img, 90)
     }
@@ -140,14 +159,22 @@ impl ScreenKit {
     pub fn status_strip(&self, text: &str) -> Result<Jpeg> {
         let (x, y) = STATUS_POS;
         let (w, h) = STATUS_SIZE;
-        let mut img = image::DynamicImage::ImageRgb8(imageops::crop_imm(&self.splash, x, y, w, h).to_image()).to_rgba8();
+        let mut img =
+            image::DynamicImage::ImageRgb8(imageops::crop_imm(&self.splash, x, y, w, h).to_image())
+                .to_rgba8();
         draw_text_centered(&mut img, text, 0, 0, w, h, true, 22.0, STATUS_COLOUR);
         encode_rgba(&img, 90)
     }
 
     /// One channel card: background plate, label band with the channel name, the channel colour
     /// line, and up to two lines of "what's in this channel" text. The dial tile goes on top.
-    pub fn card(&self, slot: usize, title: &str, colour: [u8; 3], lines: &[String]) -> Result<Jpeg> {
+    pub fn card(
+        &self,
+        slot: usize,
+        title: &str,
+        colour: [u8; 3],
+        lines: &[String],
+    ) -> Result<Jpeg> {
         let mut img = self.region(CARD_X[slot], CARD_Y, CARD_W, CARD_H);
         // The official app stacks two plates, which gives the measured (31,30,35) fill.
         imageops::overlay(&mut img, &self.card, 0, 0);
@@ -158,9 +185,29 @@ impl ScreenKit {
                 img.put_pixel(x, y, Rgba([colour[0], colour[1], colour[2], 255]));
             }
         }
-        draw_text_centered(&mut img, title, 0, BAND_Y, CARD_W, BAND_H, true, LABEL_SIZE, LABEL_COLOUR);
+        draw_text_centered(
+            &mut img,
+            title,
+            0,
+            BAND_Y,
+            CARD_W,
+            BAND_H,
+            true,
+            LABEL_SIZE,
+            LABEL_COLOUR,
+        );
         for (line, centre) in lines.iter().take(2).zip(SUB_LINE_CENTRES) {
-            draw_text_centered(&mut img, line, 6, centre - 11, CARD_W - 12, 22, false, SUB_SIZE, SUB_COLOUR);
+            draw_text_centered(
+                &mut img,
+                line,
+                6,
+                centre - 11,
+                CARD_W - 12,
+                22,
+                false,
+                SUB_SIZE,
+                SUB_COLOUR,
+            );
         }
         encode_rgba(&img, 92)
     }
@@ -178,12 +225,25 @@ impl ScreenKit {
             false => (&self.button_off, BUTTON_OFF_TEXT),
         };
         imageops::overlay(&mut img, frame, 0, 0);
-        draw_text_centered(&mut img, label, 8, 0, BUTTON_W - 16, BUTTON_H, true, BUTTON_SIZE, colour);
+        draw_text_centered(
+            &mut img,
+            label,
+            8,
+            0,
+            BUTTON_W - 16,
+            BUTTON_H,
+            true,
+            BUTTON_SIZE,
+            colour,
+        );
         encode_rgba(&img, 92)
     }
 
     pub fn blank_button(&self, slot: usize) -> Result<Jpeg> {
-        encode_rgba(&self.region(button_x(slot), BUTTON_Y, BUTTON_W, BUTTON_H), 92)
+        encode_rgba(
+            &self.region(button_x(slot), BUTTON_Y, BUTTON_W, BUTTON_H),
+            92,
+        )
     }
 
     /// Personal (Mix A) / Audience (Mix B) toggle at the top. `None` blanks it (Targets view).
@@ -194,7 +254,10 @@ impl ScreenKit {
             imageops::overlay(&mut img, &self.mix_pill, 0, 0);
             let (knob, kx) = match mix {
                 Mix::A => (&self.knob_a, 4),
-                Mix::B => (&self.knob_b, PILL_SIZE.0 as i64 - 4 - self.knob_b.width() as i64),
+                Mix::B => (
+                    &self.knob_b,
+                    PILL_SIZE.0 as i64 - 4 - self.knob_b.width() as i64,
+                ),
             };
             let ky = (PILL_SIZE.1 as i64 - knob.height() as i64) / 2;
             imageops::overlay(&mut img, knob, kx, ky);
@@ -216,7 +279,11 @@ impl ScreenKit {
             imageops::overlay(&mut img, &pill, ox as i64, oy as i64);
             let first = ox + (width - 16 * (n - 1)) / 2;
             for i in 0..n {
-                let dot = if i as u8 == active { &self.dot_on } else { &self.dot_off };
+                let dot = if i as u8 == active {
+                    &self.dot_on
+                } else {
+                    &self.dot_off
+                };
                 let cx = first + 16 * i;
                 let cy = dh / 2;
                 imageops::overlay(
@@ -247,7 +314,12 @@ fn stretch_pill(src: &RgbaImage, width: u32) -> RgbaImage {
     }
     let cap = h / 2;
     let mut out = RgbaImage::new(width, h);
-    imageops::overlay(&mut out, &imageops::crop_imm(src, 0, 0, cap, h).to_image(), 0, 0);
+    imageops::overlay(
+        &mut out,
+        &imageops::crop_imm(src, 0, 0, cap, h).to_image(),
+        0,
+        0,
+    );
     let mid = imageops::crop_imm(src, w / 2, 0, 1, h).to_image();
     for x in cap..width - cap {
         imageops::overlay(&mut out, &mid, x as i64, 0);
@@ -434,7 +506,12 @@ mod tests {
         let mut s = RgbImage::new(SCREEN.0, SCREEN.1);
         paste(&mut s, &kit.background().unwrap(), 0, 0);
         paste(&mut s, &kit.mix_pill(mix).unwrap(), PILL_POS.0, PILL_POS.1);
-        paste(&mut s, &kit.page_dots(pages, page).unwrap(), DOTS_POS.0, DOTS_POS.1);
+        paste(
+            &mut s,
+            &kit.page_dots(pages, page).unwrap(),
+            DOTS_POS.0,
+            DOTS_POS.1,
+        );
         for (i, slot) in slots.iter().enumerate() {
             match slot {
                 None => {
@@ -444,15 +521,29 @@ mod tests {
                     }
                 }
                 Some(c) => {
-                    paste(&mut s, &kit.card(i, c.title, c.colour, &c.lines).unwrap(), CARD_X[i], CARD_Y);
+                    paste(
+                        &mut s,
+                        &kit.card(i, c.title, c.colour, &c.lines).unwrap(),
+                        CARD_X[i],
+                        CARD_Y,
+                    );
                     let m = ((c.meter as f32 / 100.0) * c.volume as f32).round() as u8;
                     let tile = kit.tile(pack, c.face, c.volume, m);
                     let (dx, dy) = pack.centre_offset((CARD_W, TILE_H));
-                    paste(&mut s, &tile, (CARD_X[i] as i32 + dx) as u32, (CARD_Y as i32 + dy) as u32);
+                    paste(
+                        &mut s,
+                        &tile,
+                        (CARD_X[i] as i32 + dx) as u32,
+                        (CARD_Y as i32 + dy) as u32,
+                    );
                     if create {
                         match c.button {
-                            Some((l, a)) => paste(&mut s, &kit.button(i, l, a).unwrap(), button_x(i), BUTTON_Y),
-                            None => paste(&mut s, &kit.blank_button(i).unwrap(), button_x(i), BUTTON_Y),
+                            Some((l, a)) => {
+                                paste(&mut s, &kit.button(i, l, a).unwrap(), button_x(i), BUTTON_Y)
+                            }
+                            None => {
+                                paste(&mut s, &kit.blank_button(i).unwrap(), button_x(i), BUTTON_Y)
+                            }
                         }
                     }
                 }
@@ -466,7 +557,10 @@ mod tests {
         assert_eq!(face_for(true, (true, true), false, Mix::B), Face::Muted);
         assert_eq!(face_for(true, (true, false), false, Mix::A), Face::Muted);
         assert_eq!(face_for(true, (true, false), false, Mix::B), Face::Volume);
-        assert_eq!(face_for(true, (false, false), true, Mix::B), Face::StreamMuted);
+        assert_eq!(
+            face_for(true, (false, false), true, Mix::B),
+            Face::StreamMuted
+        );
         assert_eq!(face_for(true, (false, false), true, Mix::A), Face::Volume);
         assert_eq!(face_for(false, (true, true), false, Mix::A), Face::Muted);
     }
@@ -483,8 +577,10 @@ mod tests {
     #[test]
     #[ignore]
     fn official_preview() {
-        let pack = ImagePack::load(Path::new(&std::env::var("BEACN_TEST_IMAGES").unwrap())).unwrap();
-        let kit = ScreenKit::load(Path::new(&std::env::var("BEACN_OFFICIAL_SCREEN").unwrap())).unwrap();
+        let pack =
+            ImagePack::load(Path::new(&std::env::var("BEACN_TEST_IMAGES").unwrap())).unwrap();
+        let kit =
+            ScreenKit::load(Path::new(&std::env::var("BEACN_OFFICIAL_SCREEN").unwrap())).unwrap();
         let out = PathBuf::from(std::env::var("BEACN_PREVIEW_OUT").unwrap());
         std::fs::create_dir_all(&out).unwrap();
         let s = |v: Vec<&str>| v.into_iter().map(String::from).collect::<Vec<_>>();
@@ -492,32 +588,124 @@ mod tests {
         // Sources, Mix A (personal), Mix Create: a typical real-world Pipeweaver layout
         let sources = |mix: Mix| {
             vec![
-                Some(PreviewSlot { title: "System", colour: [0, 177, 255], lines: s(vec!["Firefox", "Steam"]), volume: 76, meter: 55, face: Face::Volume, button: Some(("AUDIENCE", false)) }),
-                Some(PreviewSlot { title: "Browser", colour: [255, 64, 64], lines: s(vec!["Brave"]), volume: 63, meter: 0, face: face_for(true, (true, true), false, mix), button: Some(("AUDIENCE", false)) }),
-                Some(PreviewSlot { title: "Music", colour: [170, 0, 255], lines: s(vec!["Spotify"]), volume: if mix == Mix::A { 41 } else { 20 }, meter: 80, face: face_for(true, (false, false), true, mix), button: Some(("AUDIENCE", true)) }),
-                Some(PreviewSlot { title: "Microphone", colour: [255, 240, 0], lines: s(vec!["BEACN Studio Microphone Input (Mono)"]), volume: 100, meter: 40, face: Face::Volume, button: Some(("MUTE ALL", false)) }),
+                Some(PreviewSlot {
+                    title: "System",
+                    colour: [0, 177, 255],
+                    lines: s(vec!["Firefox", "Steam"]),
+                    volume: 76,
+                    meter: 55,
+                    face: Face::Volume,
+                    button: Some(("AUDIENCE", false)),
+                }),
+                Some(PreviewSlot {
+                    title: "Browser",
+                    colour: [255, 64, 64],
+                    lines: s(vec!["Brave"]),
+                    volume: 63,
+                    meter: 0,
+                    face: face_for(true, (true, true), false, mix),
+                    button: Some(("AUDIENCE", false)),
+                }),
+                Some(PreviewSlot {
+                    title: "Music",
+                    colour: [170, 0, 255],
+                    lines: s(vec!["Spotify"]),
+                    volume: if mix == Mix::A { 41 } else { 20 },
+                    meter: 80,
+                    face: face_for(true, (false, false), true, mix),
+                    button: Some(("AUDIENCE", true)),
+                }),
+                Some(PreviewSlot {
+                    title: "Microphone",
+                    colour: [255, 240, 0],
+                    lines: s(vec!["BEACN Studio Microphone Input (Mono)"]),
+                    volume: 100,
+                    meter: 40,
+                    face: Face::Volume,
+                    button: Some(("MUTE ALL", false)),
+                }),
             ]
         };
-        compose(&kit, &pack, &sources(Mix::A), Some(Mix::A), 2, 0, true).save(out.join("mixcreate-sources-mixA.png")).unwrap();
-        compose(&kit, &pack, &sources(Mix::B), Some(Mix::B), 2, 0, true).save(out.join("mixcreate-sources-mixB-audience.png")).unwrap();
+        compose(&kit, &pack, &sources(Mix::A), Some(Mix::A), 2, 0, true)
+            .save(out.join("mixcreate-sources-mixA.png"))
+            .unwrap();
+        compose(&kit, &pack, &sources(Mix::B), Some(Mix::B), 2, 0, true)
+            .save(out.join("mixcreate-sources-mixB-audience.png"))
+            .unwrap();
 
         let page2 = vec![
-            Some(PreviewSlot { title: "Game", colour: [0, 230, 118], lines: s(vec![]), volume: 0, meter: 0, face: Face::Volume, button: Some(("AUDIENCE", false)) }),
-            Some(PreviewSlot { title: "Chat", colour: [0, 255, 255], lines: s(vec!["Discord"]), volume: 88, meter: 60, face: Face::Volume, button: Some(("AUDIENCE", false)) }),
+            Some(PreviewSlot {
+                title: "Game",
+                colour: [0, 230, 118],
+                lines: s(vec![]),
+                volume: 0,
+                meter: 0,
+                face: Face::Volume,
+                button: Some(("AUDIENCE", false)),
+            }),
+            Some(PreviewSlot {
+                title: "Chat",
+                colour: [0, 255, 255],
+                lines: s(vec!["Discord"]),
+                volume: 88,
+                meter: 60,
+                face: Face::Volume,
+                button: Some(("AUDIENCE", false)),
+            }),
             None,
             None,
         ];
-        compose(&kit, &pack, &page2, Some(Mix::A), 2, 1, true).save(out.join("mixcreate-sources-page2.png")).unwrap();
+        compose(&kit, &pack, &page2, Some(Mix::A), 2, 1, true)
+            .save(out.join("mixcreate-sources-page2.png"))
+            .unwrap();
 
         // Hold a dial: Targets view (no mix toggle, no mute buttons)
         let targets = vec![
-            Some(PreviewSlot { title: "Headphones", colour: [0, 177, 255], lines: s(vec!["BEACN Studio Headphones"]), volume: 70, meter: 50, face: Face::Volume, button: None }),
-            Some(PreviewSlot { title: "Speakers", colour: [255, 140, 0], lines: s(vec!["AORUS FV43U"]), volume: 35, meter: 20, face: face_for(false, (true, true), false, Mix::A), button: None }),
-            Some(PreviewSlot { title: "Chat Mic", colour: [0, 255, 255], lines: s(vec!["Mix A"]), volume: 100, meter: 30, face: Face::Volume, button: None }),
-            Some(PreviewSlot { title: "Audience", colour: [255, 64, 128], lines: s(vec!["Mix B"]), volume: 100, meter: 65, face: Face::Volume, button: None }),
+            Some(PreviewSlot {
+                title: "Headphones",
+                colour: [0, 177, 255],
+                lines: s(vec!["BEACN Studio Headphones"]),
+                volume: 70,
+                meter: 50,
+                face: Face::Volume,
+                button: None,
+            }),
+            Some(PreviewSlot {
+                title: "Speakers",
+                colour: [255, 140, 0],
+                lines: s(vec!["AORUS FV43U"]),
+                volume: 35,
+                meter: 20,
+                face: face_for(false, (true, true), false, Mix::A),
+                button: None,
+            }),
+            Some(PreviewSlot {
+                title: "Chat Mic",
+                colour: [0, 255, 255],
+                lines: s(vec!["Mix A"]),
+                volume: 100,
+                meter: 30,
+                face: Face::Volume,
+                button: None,
+            }),
+            Some(PreviewSlot {
+                title: "Audience",
+                colour: [255, 64, 128],
+                lines: s(vec!["Mix B"]),
+                volume: 100,
+                meter: 65,
+                face: Face::Volume,
+                button: None,
+            }),
         ];
-        compose(&kit, &pack, &targets, None, 1, 0, true).save(out.join("mixcreate-targets.png")).unwrap();
+        compose(&kit, &pack, &targets, None, 1, 0, true)
+            .save(out.join("mixcreate-targets.png"))
+            .unwrap();
 
-        std::fs::write(out.join("splash-loading.jpg"), kit.splash(Some("Loading...")).unwrap().as_slice()).unwrap();
+        std::fs::write(
+            out.join("splash-loading.jpg"),
+            kit.splash(Some("Loading...")).unwrap().as_slice(),
+        )
+        .unwrap();
     }
 }

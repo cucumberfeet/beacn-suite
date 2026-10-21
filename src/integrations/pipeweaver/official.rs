@@ -18,7 +18,7 @@
 //! Configuration: env `BEACN_OFFICIAL_ARTWORK=/path/to/default.images`, or a file at
 //! `$XDG_CONFIG_HOME/beacn-utility/official-artwork` containing the path.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -27,6 +27,8 @@ pub const TILES_PER_FACE: usize = VOLUME_STEPS * (VOLUME_STEPS + 1) / 2; // 5050
 pub const FACE_COUNT: usize = 6;
 pub const EXPECTED_TILES: usize = TILES_PER_FACE * FACE_COUNT; // 30300
 
+/// All six faces in the pack, in file order (some are not used by the Pipeweaver mapping yet).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Face {
     Volume = 0,
@@ -46,6 +48,7 @@ pub fn tile_index(face: Face, volume: u8, meter: u8) -> usize {
 }
 
 /// Inverse of `tile_index` (used for tests / tooling).
+#[allow(dead_code)]
 pub fn tile_state(index: usize) -> Option<(Face, u8, u8)> {
     if index >= EXPECTED_TILES {
         return None;
@@ -98,7 +101,11 @@ impl ImagePack {
             bail!("expected {EXPECTED_TILES} tiles, found {}", tiles.len());
         }
         let (width, height) = jpeg_dimensions(&tiles[0]).context("no JPEG SOF")?;
-        Ok(Self { tiles, width, height })
+        Ok(Self {
+            tiles,
+            width,
+            height,
+        })
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -106,6 +113,7 @@ impl ImagePack {
         Self::parse(&data)
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.tiles.len()
     }
@@ -134,7 +142,7 @@ pub fn jpeg_dimensions(j: &[u8]) -> Option<(u32, u32)> {
         }
         let marker = j[i + 1];
         let len = u16::from_be_bytes([j[i + 2], j[i + 3]]) as usize;
-        if matches!(marker, 0xC0 | 0xC1 | 0xC2) {
+        if matches!(marker, 0xC0..=0xC2) {
             let h = u16::from_be_bytes([j[i + 5], j[i + 6]]) as u32;
             let w = u16::from_be_bytes([j[i + 7], j[i + 8]]) as u32;
             return Some((w, h));
@@ -145,10 +153,10 @@ pub fn jpeg_dimensions(j: &[u8]) -> Option<(u32, u32)> {
 }
 
 pub(crate) fn configured_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("BEACN_OFFICIAL_ARTWORK") {
-        if !p.is_empty() {
-            return Some(PathBuf::from(p));
-        }
+    if let Ok(p) = std::env::var("BEACN_OFFICIAL_ARTWORK")
+        && !p.is_empty()
+    {
+        return Some(PathBuf::from(p));
     }
     let dirs = directories::ProjectDirs::from("", "", "beacn-utility")?;
     let f = dirs.config_dir().join("official-artwork");
@@ -165,7 +173,12 @@ pub fn pack() -> Option<&'static ImagePack> {
         let path = configured_path()?;
         match ImagePack::load(&path) {
             Ok(p) => {
-                log::info!("Official artwork loaded from {} ({}x{})", path.display(), p.width, p.height);
+                log::info!(
+                    "Official artwork loaded from {} ({}x{})",
+                    path.display(),
+                    p.width,
+                    p.height
+                );
                 Some(p)
             }
             Err(e) => {
@@ -217,7 +230,10 @@ mod tests {
     fn clamping() {
         assert_eq!(tile_index(Face::Volume, 0, 0), 0);
         assert_eq!(tile_index(Face::Volume, 200, 200), TILES_PER_FACE - 1);
-        assert_eq!(tile_index(Face::Volume, 10, 10), tile_index(Face::Volume, 10, 9));
+        assert_eq!(
+            tile_index(Face::Volume, 10, 10),
+            tile_index(Face::Volume, 10, 9)
+        );
     }
 
     #[test]
