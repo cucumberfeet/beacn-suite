@@ -39,6 +39,8 @@ jobs:
         run: cargo clippy --all-features -- -D warnings
 
       - name: Dispatch Flatpak Updater
+        # Upstream only: needs the beacn-on-linux org secret, which this fork doesn't have
+        if: github.repository == 'beacn-on-linux/beacn-utility'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.CROSS_REPO_DISPATCH_TOKEN }}  # Stored in the org secrets
