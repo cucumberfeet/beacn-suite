@@ -14,4 +14,4 @@ Actions=mixer;
 
 [Desktop Action mixer]
 Name=Mixer
-Exec=pipeweaver-app
+Exec=env BEACN_WITH_PIPEWEAVER=1 beacn-utility --mixer

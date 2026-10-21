@@ -108,3 +108,25 @@ as before. The native page also offers "Open web mixer" in its Settings tab for 
 Same palette as beacn-utility (`#1B1B1B` background, `#3C3C3C` controls, `#005C80` accent)
 and the mixer colours already used on the Mix Create screen: Mix A cyan `#59B1B6`, Mix B
 orange `#F47C24`, mute red. Channel headers carry the channel colour. No third-party branding.
+
+## Testing
+
+Headless test bed (box/CI container, never a real desktop): `contrib/tests/native-mixer-env.sh`
+starts PipeWire, WirePlumber, two null devices, pipeweaver-daemon with a demo profile,
+three looping "apps" and Xvfb. `contrib/tests/pw-ws.py` sends API commands, which is how a
+dial or button on the Mix Create reaches the daemon, so it doubles as a hardware simulator.
+
+Checked on the box (Oct 20, 2026, Fedora 44 container, debug build):
+
+- every tab renders; channel, mute-target, add and hidden-channel menus anchor correctly
+  (and flip above the trigger near the bottom edge);
+- UI -> daemon: fader drag (linked B follows), Mute A, "All outputs (Mute All)" clears the
+  Mute B target list, route grid toggle, app route, effect enable toggle, colour preset,
+  rename (with validation), create, hide/unhide;
+- daemon -> UI without reload: volume, Mute B and linked volume changes sent from another
+  client appear at once;
+- daemon stopped -> "Starting the audio mixer…" screen; daemon back -> reconnects by itself.
+
+Not verifiable headless: physical device volume (null sinks report 0 from the daemon, so
+the Devices sliders read 0 there), real Mix Create input, Wayland/KDE window behaviour and
+meter CPU cost on real hardware.

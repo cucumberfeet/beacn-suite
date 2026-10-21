@@ -39,10 +39,15 @@ pieces in subfolders. The upstream README is kept as [UPSTREAM_README.md](UPSTRE
     already running Pipeweaver daemon is left alone.
   - **One tray icon:** "Beacn" with Devices, Mixer, Open Logs and Quit. Pipeweaver's own tray
     is disabled by a small patch (`patches/pipeweaver/`).
-  - **Native mixer window** (`beacn-mixer/`): a GTK 3 + WebKitGTK window titled "Beacn Mixer"
-    that shows Pipeweaver's web UI without a browser. Single instance, remembers its size,
-    opens external links in your browser, waits and retries while the daemon starts.
-    Right-click or Ctrl+D opens the device window; Ctrl+R / F5 reloads.
+  - **Mixer page inside the Beacn window:** the tray's "Mixer", the launcher's "Mixer" action
+    and `beacn-utility --mixer` open a native Mixer page (Mixer, Routing, Applications,
+    Devices and Settings tabs) that talks to pipeweaver-daemon directly and follows changes
+    made on the hardware live. See `docs/native-mixer-plan.md`.
+  - **Old mixer window, kept as a fallback** (`beacn-mixer/`): a GTK 3 + WebKitGTK window
+    titled "Beacn Mixer" showing Pipeweaver's web UI. Use it with `BEACN_LEGACY_MIXER=1` or
+    `touch ~/.config/beacn-utility/legacy-mixer` (then restart beacn.service), or the
+    "Open web mixer" button on the Mixer page's Settings tab. Its effect panels have graphs
+    (EQ curve, compressor) that the native page shows as plain controls.
   - **One launcher and app identity:** both windows use the app id
     `io.github.beacn_on_linux.beacn-utility`, so Plasma groups them under one taskbar icon.
     The launcher's "Mixer" action opens the mixer.
@@ -96,6 +101,11 @@ entries, user units and the beacn-utility / Pipeweaver config to `~/beacn-backup
 - hides (does not delete) old Pipeweaver / beacn-utility launchers, removes their autostart
   entries, disables `pipeweaver.service`, and enables `beacn.service`.
 
+To move an existing install to the native Mixer page without touching Pipeweaver, run
+`packaging/native-mixer-install.sh` (backs up the current beacn-utility and launcher, asks
+before restarting beacn.service, which interrupts audio for a few seconds) and undo it with
+`packaging/native-mixer-rollback.sh`.
+
 Check it: `systemctl --user status beacn`, `pgrep -a pipeweaver-dae` (its parent should be
 beacn-utility), `journalctl --user -u beacn`. If the mixer window can't open from the service,
 check `systemctl --user show-environment | grep WAYLAND`.
@@ -146,10 +156,9 @@ if it was enabled, and starts the old beacn-utility. Generated artwork kits are 
 
 ## Known limits
 
-- **Two windows on Wayland.** The device window (iced/winit) can't embed a web view on
-  Wayland (child web views only work on X11), so the mixer is its own window. Both are one
-  app (one service, tray, launcher and taskbar group). A truly single window would need a
-  native mixer page inside beacn-utility.
+- **Effects show plain controls.** The native Mixer page edits every effect setting as a
+  slider, switch or list; the graphical EQ/compressor panels are only in the old web mixer
+  window. Channels are reordered with "Move left/right" instead of drag and drop.
 - **Default BEACN theme only.** The other official themes (analogue, neumorphic, ...) are not
   mapped yet.
 - Kit generation is pinned to BEACN app **1.4.2.12** (by asset hashes).
