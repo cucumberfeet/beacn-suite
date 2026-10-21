@@ -1,0 +1,10 @@
+# Clean Fedora 44 build environment for packaging/build.sh
+#   podman build -t beacn-build:f44 -f contrib/Containerfile .
+#   podman run --rm -v "$PWD":/src:Z -w /src beacn-build:f44 packaging/build.sh
+FROM registry.fedoraproject.org/fedora:44
+RUN dnf -y --disablerepo=fedora-cisco-openh264 install --setopt=install_weak_deps=False \
+    cargo rust gcc gcc-c++ pkgconf-pkg-config git nodejs-npm \
+    libxkbcommon-devel wayland-devel libX11-devel fontconfig-devel freetype-devel dbus-devel \
+    systemd-devel pipewire-devel clang-devel lilv-devel alsa-lib-devel openssl-devel \
+    webkit2gtk4.1-devel gtk3-devel libsoup3-devel libayatana-appindicator-gtk3-devel \
+    && dnf clean all

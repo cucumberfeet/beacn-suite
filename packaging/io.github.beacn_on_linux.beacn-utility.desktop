@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Beacn
+GenericName=Audio Mixer and Device Settings
+Comment=Beacn devices and audio mixer
+Exec=env BEACN_WITH_PIPEWEAVER=1 beacn-utility
+Icon=io.github.beacn_on_linux.beacn-utility
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;Settings;HardwareSettings;
+Keywords=beacn;mixer;pipeweaver;audio;microphone;
+StartupWMClass=io.github.beacn_on_linux.beacn-utility
+SingleMainWindow=true
+Actions=mixer;
+
+[Desktop Action mixer]
+Name=Mixer
+Exec=pipeweaver-app

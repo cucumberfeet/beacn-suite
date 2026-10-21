@@ -1,0 +1,18 @@
+[Unit]
+Description=Beacn (device control + audio mixer)
+Documentation=https://github.com/cucumberfeet/beacn-suite
+After=pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/beacn-utility --background --with-pipeweaver
+Restart=on-failure
+RestartSec=3
+# The mixer window is spawned from here; make sure it can find the display
+PassEnvironment=WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR XDG_SESSION_TYPE XAUTHORITY
+
+[Install]
+WantedBy=graphical-session.target
