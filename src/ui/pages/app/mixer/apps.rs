@@ -740,7 +740,7 @@ impl MixerPage {
             .spacing(10),
         )
         .padding(10)
-        .width(Length::FillPortion(1))
+        .width(Length::FillPortion(2))
         .height(Length::Fill)
         .style(style::panel)
         .into()
