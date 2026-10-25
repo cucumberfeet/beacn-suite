@@ -374,14 +374,17 @@ impl MixerPage {
 
         let main = tooltip(
             button(
-                row![
-                    style::icon(icon, 11.0, if active { Color::WHITE } else { TEXT }),
-                    text(clip(&label, 14))
-                        .size(11)
-                        .wrapping(text::Wrapping::None)
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
+                container(
+                    row![
+                        style::icon(icon, 11.0, if active { Color::WHITE } else { TEXT }),
+                        text(clip(&label, 14))
+                            .size(11)
+                            .wrapping(text::Wrapping::None)
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .center_y(Length::Fill),
             )
             .width(Length::Fill)
             .height(26)
@@ -463,20 +466,23 @@ impl MixerPage {
     fn target_mute<'a>(&'a self, c: &'a Channel) -> El<'a> {
         let active = c.mute_a;
         button(
-            row![
-                style::icon(
-                    if active {
-                        "volume-xmark"
-                    } else {
-                        "volume-high"
-                    },
-                    11.0,
-                    if active { Color::WHITE } else { TEXT }
-                ),
-                text(if active { "Muted" } else { "Mute" }).size(11)
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+            container(
+                row![
+                    style::icon(
+                        if active {
+                            "volume-xmark"
+                        } else {
+                            "volume-high"
+                        },
+                        11.0,
+                        if active { Color::WHITE } else { TEXT }
+                    ),
+                    text(if active { "Muted" } else { "Mute" }).size(11)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .center_y(Length::Fill),
         )
         .width(Length::Fill)
         .height(26)
