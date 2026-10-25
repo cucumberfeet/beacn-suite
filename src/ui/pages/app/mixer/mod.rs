@@ -4,6 +4,7 @@
 //! See docs/native-mixer-plan.md for the feature inventory and the daemon API it uses.
 
 mod apps;
+mod catalog;
 mod client;
 mod devices;
 mod filters;
@@ -21,6 +22,7 @@ use iced::{Subscription, Task};
 use log::{debug, warn};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use web_time::{Duration, Instant};
 
 /// How long a fader keeps showing the local value after it's let go, so the daemon's echo can
@@ -121,6 +123,15 @@ pub enum MixerMessage {
     AppVolumeReleased(u32),
     AppMute(u32, bool),
     ToggleAppExpanded(String),
+    AppSearch(String),
+    RescanApps,
+    CatalogLoaded(Arc<apps::LoadedCatalog>),
+    StreamsProbed(Vec<(u32, catalog::StreamIds)>),
+    /// Pick a channel for a catalogued app (`None`: Default, i.e. the default output)
+    SetCatalogRoute {
+        key: String,
+        target: Option<String>,
+    },
 
     // Devices
     PhysicalVolume(String, u8),
@@ -166,6 +177,17 @@ pub struct MixerPage {
     expanded_apps: HashSet<String>,
     selected_filter: Option<String>,
     filter_search: String,
+
+    // Applications tab: installed apps / Steam games and the channel picked for each
+    catalog: Option<Arc<apps::LoadedCatalog>>,
+    scanning: bool,
+    routing: catalog::AppRouting,
+    app_search: String,
+    /// Extra ids (Flatpak id, SteamAppId) read for running streams, by node id
+    stream_ids: HashMap<u32, catalog::StreamIds>,
+    probing: HashSet<u32>,
+    /// (process, name) -> channel we last asked Pipeweaver to route it to
+    enforced: HashMap<(String, String), String>,
 }
 
 impl MixerPage {
@@ -188,6 +210,13 @@ impl MixerPage {
             expanded_apps: HashSet::new(),
             selected_filter: None,
             filter_search: String::new(),
+            catalog: None,
+            scanning: false,
+            routing: catalog::AppRouting::load(),
+            app_search: String::new(),
+            stream_ids: HashMap::new(),
+            probing: HashSet::new(),
+            enforced: HashMap::new(),
         }
     }
 
@@ -353,6 +382,26 @@ impl MixerPage {
     ////////////////////////////////////////////////////////////////////////////////////////
 
     pub fn update(&mut self, message: MixerMessage) -> Task<MixerMessage> {
+        // Anything that can change which apps are running, or where they should go
+        let check_routes = matches!(
+            message,
+            MixerMessage::Client(_)
+                | MixerMessage::CatalogLoaded(_)
+                | MixerMessage::StreamsProbed(_)
+                | MixerMessage::SetCatalogRoute { .. }
+        );
+        let task = self.update_inner(message);
+        if !check_routes {
+            return task;
+        }
+        let mut tasks = vec![task, self.enforce_app_routes()];
+        if self.catalog.is_none() && !self.scanning && self.connected {
+            tasks.push(self.scan_apps());
+        }
+        Task::batch(tasks)
+    }
+
+    fn update_inner(&mut self, message: MixerMessage) -> Task<MixerMessage> {
         match message {
             MixerMessage::Client(event) => match event {
                 Event::Ready(sender) => {
@@ -629,6 +678,23 @@ impl MixerPage {
                     self.expanded_apps.insert(key);
                 }
             }
+            MixerMessage::AppSearch(search) => self.app_search = search,
+            MixerMessage::RescanApps => {
+                if !self.scanning {
+                    return self.scan_apps();
+                }
+            }
+            MixerMessage::CatalogLoaded(loaded) => {
+                self.scanning = false;
+                self.catalog = Some(loaded);
+            }
+            MixerMessage::StreamsProbed(found) => {
+                for (node, ids) in found {
+                    self.probing.remove(&node);
+                    self.stream_ids.insert(node, ids);
+                }
+            }
+            MixerMessage::SetCatalogRoute { key, target } => self.set_catalog_route(key, target),
 
             MixerMessage::PhysicalVolume(id, value) => {
                 let key = format!("phys:{id}");
