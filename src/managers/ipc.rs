@@ -52,6 +52,9 @@ pub async fn handle_ipc(
                             "TRIGGER" => {
                                 let _ = main_tx.send(WindowMessage::OpenWindow);
                             }
+                            "MIXER" => {
+                                let _ = main_tx.send(WindowMessage::OpenMixer);
+                            }
                             _ => {
                                 debug!("Unknown Message, aborting: {msg}");
                                 break;
@@ -96,7 +99,7 @@ fn remove_stale_file_socket(_name: &Name<'static>) {
 
 /// Checks whether another instance is already running by attempting to connect
 /// to its socket. If so, forwards a trigger message to it and returns `true`.
-pub async fn handle_active_instance() -> bool {
+pub async fn handle_active_instance(mixer: bool) -> bool {
     let name = match get_socket_name() {
         Ok(name) => name,
         Err(e) => {
@@ -109,7 +112,8 @@ pub async fn handle_active_instance() -> bool {
     match LocalSocketStream::connect(name.clone()).await {
         Ok(mut stream) => {
             debug!("Connected to Existing Socket, Sending Trigger");
-            let _ = stream.write_all(b"TRIGGER").await;
+            let message: &[u8] = if mixer { b"MIXER" } else { b"TRIGGER" };
+            let _ = stream.write_all(message).await;
             let _ = stream.shutdown().await;
             true
         }

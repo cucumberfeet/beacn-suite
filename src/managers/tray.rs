@@ -62,10 +62,8 @@ pub async fn handle_tray(
                     }
 
                     Ok(TrayMessages::OpenMixer) => {
-                        if !crate::integrations::pipeweaver::launch_pipeweaver_ui() {
-                            // Mixer isn't reachable, show the device window instead
-                            let _ = tray_main_tx.send(WindowMessage::OpenWindow);
-                        }
+                        // The window decides: the native Mixer page, or the legacy mixer window
+                        let _ = tray_main_tx.send(WindowMessage::OpenMixer);
                     }
 
                     Ok(TrayMessages::OpenLogs) => {

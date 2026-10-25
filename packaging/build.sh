@@ -36,5 +36,8 @@ install -m755 "$WORK/pipeweaver/target/release/pipeweaver-client" "$OUT/files/pi
 install -m644 "$ROOT/resources/icons/beacn-utility-large.png" "$OUT/files/io.github.beacn_on_linux.beacn-utility.png"
 install -m644 "$ROOT/packaging/beacn.service" "$ROOT/packaging/io.github.beacn_on_linux.beacn-utility.desktop" "$OUT/files/"
 install -m755 "$ROOT/packaging/install.sh" "$ROOT/packaging/rollback.sh" "$OUT/"
+mkdir -p "$OUT/packaging"
+install -m755 "$ROOT/packaging/native-mixer-install.sh" "$ROOT/packaging/native-mixer-rollback.sh" "$OUT/packaging/"
+install -m644 "$ROOT/packaging/io.github.beacn_on_linux.beacn-utility.desktop" "$OUT/packaging/"
 ( cd "$OUT/files" && sha256sum beacn-utility beacn-mixer pipeweaver-daemon pipeweaver-client > "$OUT/SHA256SUMS" )
 echo "Built. Next: (cd $OUT && ./install.sh)"

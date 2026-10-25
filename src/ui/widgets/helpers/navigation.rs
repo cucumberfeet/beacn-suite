@@ -10,7 +10,7 @@ pub(crate) fn pipeweaver_sidebar_item(active: bool) -> Element<'static, Message>
         Space::new()
             .width(Length::Shrink)
             .height(Length::Fixed(2.0)),
-        round_nav_button("pipeweaver", active).on_press(Message::ActivatePipeweaver),
+        round_nav_button("mixer-sliders", active).on_press(Message::ActivatePipeweaver),
         Space::new()
             .width(Length::Shrink)
             .height(Length::Fixed(11.0)),

@@ -4,6 +4,8 @@ use crate::devices::states::audio::AudioState;
 use crate::devices::states::control::ControlState;
 use crate::integrations::pipeweaver::launch_pipeweaver_ui;
 use crate::ui::events::channel::TrackedReceiver;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::ui::pages::app::mixer::{MixerMessage, MixerPage, legacy_mixer};
 use crate::ui::pages::app::pipeweaver::{PipeweaverMessage, PipeweaverPage};
 use crate::ui::pages::app::settings::{SettingsMessage, SettingsPage};
 use crate::ui::pages::page::{AP, CP, Page, PageMessage};
@@ -73,11 +75,19 @@ pub(crate) enum Message {
     ActivatePipeweaver,
     Pipeweaver(PipeweaverMessage),
 
+    // Open the window on the Mixer page (tray, launcher action, second launch)
+    OpenMixer,
+    #[cfg(not(target_arch = "wasm32"))]
+    Mixer(MixerMessage),
+
     ActivateSettings,
     Settings(SettingsMessage),
 
     // Page Selection
-    SelectDeviceAndPage { device_id: String, page_id: usize },
+    SelectDeviceAndPage {
+        device_id: String,
+        page_id: usize,
+    },
 
     // Messages that are passed to the current page
     Page(PageMessage),
@@ -103,6 +113,11 @@ pub struct BeacnUtility {
 
     // Hard Coded Pages
     pipeweaver_page: PipeweaverPage,
+    #[cfg(not(target_arch = "wasm32"))]
+    mixer_page: MixerPage,
+
+    // Use the old Beacn Mixer window instead of the native Mixer page
+    legacy_mixer: bool,
     settings_page: SettingsPage,
 
     // These are overrides for showing the pipeweaver and settings pages
@@ -128,7 +143,14 @@ impl BeacnUtility {
                 active_page: None,
 
                 pipeweaver_page: PipeweaverPage::new(),
+                #[cfg(not(target_arch = "wasm32"))]
+                mixer_page: MixerPage::new(),
                 mixer_active: false,
+
+                #[cfg(not(target_arch = "wasm32"))]
+                legacy_mixer: legacy_mixer(),
+                #[cfg(target_arch = "wasm32")]
+                legacy_mixer: true,
 
                 settings_page: SettingsPage::new(),
                 settings_active: false,
@@ -263,21 +285,31 @@ impl BeacnUtility {
             }
 
             Message::ActivatePipeweaver => {
-                if !launch_pipeweaver_ui() {
-                    self.mixer_active = true;
-                    self.settings_active = false;
-
-                    self.active_device = None;
-                    self.active_device = None;
+                if !self.legacy_mixer || !launch_pipeweaver_ui() {
+                    self.show_mixer();
                 }
             }
 
-            Message::ActivateSettings => {
-                self.mixer_active = false;
-                self.settings_active = true;
+            Message::OpenMixer => {
+                if self.legacy_mixer && launch_pipeweaver_ui() {
+                    return Task::none();
+                }
+                self.show_mixer();
+                return match self.active_id {
+                    Some(id) => window::gain_focus(id),
+                    None => Task::done(Message::WindowOpen),
+                };
+            }
 
-                self.active_device = None;
-                self.active_device = None;
+            #[cfg(not(target_arch = "wasm32"))]
+            Message::Mixer(msg) => {
+                return self.mixer_page.update(msg).map(Message::Mixer);
+            }
+
+            Message::ActivateSettings => {
+                self.leave_mixer();
+                self.close_active_page();
+                self.settings_active = true;
             }
 
             Message::Settings(msg) => {
@@ -294,7 +326,7 @@ impl BeacnUtility {
 
             Message::SelectDeviceAndPage { device_id, page_id } => {
                 // A device page has been clicked, we should clear out of pipewire / about
-                self.mixer_active = false;
+                self.leave_mixer();
                 self.settings_active = false;
 
                 // Check if the requested selection is already exactly what is active
@@ -384,8 +416,8 @@ impl BeacnUtility {
                 return iced::exit();
             }
             Message::WindowOpen => {
-                if self.active_id.is_some() {
-                    return Task::none();
+                if let Some(id) = self.active_id {
+                    return window::gain_focus(id);
                 }
 
                 // Pre-emptively trigger on-open on the current page if we're configured..
@@ -430,6 +462,33 @@ impl BeacnUtility {
         Task::none()
     }
 
+    /// Shows the Mixer page (the native one, or the "get Pipeweaver" page on the web build)
+    fn show_mixer(&mut self) {
+        self.close_active_page();
+        self.mixer_active = true;
+        self.settings_active = false;
+    }
+
+    fn leave_mixer(&mut self) {
+        if self.mixer_active {
+            self.mixer_active = false;
+            #[cfg(not(target_arch = "wasm32"))]
+            self.mixer_page.on_hide();
+        }
+    }
+
+    /// Runs the current device page's on_close and deselects it
+    fn close_active_page(&mut self) {
+        if let Some(hash) = &self.active_device
+            && let Some(page) = self.active_page
+            && let Some(device) = self.devices.get_mut(hash)
+        {
+            device.pages[page].on_close_fn(&mut device.state);
+        }
+        self.active_device = None;
+        self.active_page = None;
+    }
+
     fn validate_page(&mut self) {
         let Some(device_id) = &self.active_device else {
             return;
@@ -459,9 +518,9 @@ impl BeacnUtility {
     }
 
     pub(crate) fn view(&self, _window_id: window::Id) -> Element<'_, Message> {
-        // If no devices, display no devices message.
-        if self.devices.is_empty() {
-            return container(
+        // If no devices, display no devices message (the mixer is still reachable)
+        let no_devices = || -> Element<'_, Message> {
+            container(
                 text("No Devices Detected")
                     .size(20)
                     .align_x(Horizontal::Center)
@@ -471,8 +530,8 @@ impl BeacnUtility {
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
-            .into();
-        }
+            .into()
+        };
 
         // Add the pipeweaver button at the top
         let mut sidebar_items = column![].align_x(Alignment::Center);
@@ -543,7 +602,17 @@ impl BeacnUtility {
 
         // Generate the page content
         let content_area = if self.mixer_active {
-            self.pipeweaver_page.view().map(Message::Pipeweaver)
+            #[cfg(not(target_arch = "wasm32"))]
+            let page = if self.legacy_mixer {
+                self.pipeweaver_page.view().map(Message::Pipeweaver)
+            } else {
+                self.mixer_page.view().map(Message::Mixer)
+            };
+            #[cfg(target_arch = "wasm32")]
+            let page = self.pipeweaver_page.view().map(Message::Pipeweaver);
+            page
+        } else if self.devices.is_empty() && !self.settings_active {
+            no_devices()
         } else if self.settings_active {
             self.settings_page.view().map(Message::Settings)
         } else {
@@ -593,6 +662,7 @@ impl BeacnUtility {
             rx: self.window_rx.clone(),
             map_fn: |msg| match msg {
                 WindowMessage::OpenWindow => Message::WindowOpen,
+                WindowMessage::OpenMixer => Message::OpenMixer,
                 WindowMessage::Quit => Message::Quit,
             },
         };
@@ -605,7 +675,16 @@ impl BeacnUtility {
         let tick_rate = 1000 / 45;
         let ticker = time::every(Duration::from_millis(tick_rate)).map(|_| Message::Tick);
 
-        Subscription::batch(vec![device_sub, window_sub, resize_sub, close_sub, ticker])
+        #[allow(unused_mut)]
+        let mut subs = vec![device_sub, window_sub, resize_sub, close_sub, ticker];
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.legacy_mixer {
+            let visible = self.active_id.is_some() && self.mixer_active;
+            subs.push(self.mixer_page.subscription(visible).map(Message::Mixer));
+        }
+
+        Subscription::batch(subs)
     }
 }
 
