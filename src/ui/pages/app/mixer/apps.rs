@@ -119,6 +119,7 @@ impl MixerPage {
         let mut live_pairs = HashSet::new();
         let mut to_probe = vec![];
         let mut sends = vec![];
+        let mut resets = vec![];
         for (process, apps) in running {
             for (name, nodes) in apps {
                 live_pairs.insert((process.clone(), name.clone()));
@@ -142,6 +143,13 @@ impl MixerPage {
                 };
                 let app = &catalog.apps[index];
                 let Some(saved) = self.routing.apps.get(&app.key) else {
+                    if self.routing.reset.contains(&app.key) {
+                        info!(
+                            "Applications: {process} / {name} ({}) is back on Default, moving it to the default output",
+                            app.name
+                        );
+                        resets.push(((process.clone(), name.clone()), app.key.clone()));
+                    }
                     continue;
                 };
                 if self.model.channel(&saved.channel).is_none() {
@@ -170,6 +178,15 @@ impl MixerPage {
                 target
             ] }));
             self.enforced.insert((process, name), target);
+        }
+        if !resets.is_empty() {
+            for ((process, name), key) in resets {
+                self.pw(json!({ "ClearApplicationRoute":
+                    { "device_type": "Source", "process": process, "name": name }
+                }));
+                self.routing.reset.remove(&key);
+            }
+            self.routing.save();
         }
 
         if to_probe.is_empty() {
@@ -203,6 +220,7 @@ impl MixerPage {
             return;
         };
         let app = &catalog.apps[index];
+        self.routing.reset.remove(&key);
         match &target {
             Some(channel) => {
                 let channel_name = self.model.channel_name(channel).unwrap_or("").to_string();
@@ -219,30 +237,34 @@ impl MixerPage {
                 self.routing.apps.remove(&key);
             }
         }
-        self.routing.save();
 
         // Every pair this app is known by: running now, or remembered by Pipeweaver
-        let mut pairs: Vec<(Pair, bool)> = vec![];
+        let mut pairs: Vec<Pair> = vec![];
+        let mut playing = false;
         for (process, apps) in &self.model.status.audio.applications.source {
             for (name, nodes) in apps {
                 let extra = self.extra_ids(nodes);
                 if catalog.find(process, name, Some(&extra)) == Some(index) {
-                    let mapped = self.mapping_of(process, name).is_some();
-                    pairs.push(((process.clone(), name.clone()), mapped));
+                    playing = true;
+                    pairs.push((process.clone(), name.clone()));
                 }
             }
         }
         for (process, apps) in &self.model.status.audio.profile.application_mapping.source {
             for name in apps.keys() {
                 let pair = (process.clone(), name.clone());
-                if catalog.find(process, name, None) == Some(index)
-                    && !pairs.iter().any(|(p, _)| *p == pair)
-                {
-                    pairs.push((pair, true));
+                if catalog.find(process, name, None) == Some(index) && !pairs.contains(&pair) {
+                    pairs.push(pair);
                 }
             }
         }
-        for ((process, name), mapped) in pairs {
+        // Back to Default while not playing: finish the job when it next plays
+        if target.is_none() && !playing {
+            self.routing.reset.insert(key.clone());
+        }
+        self.routing.save();
+
+        for (process, name) in pairs {
             let definition = json!({ "device_type": "Source", "process": process, "name": name });
             match &target {
                 Some(channel) => {
@@ -250,24 +272,12 @@ impl MixerPage {
                     self.enforced.insert((process, name), channel.clone());
                 }
                 None => {
-                    if mapped {
-                        self.pw(json!({ "ClearApplicationRoute": definition }));
-                    }
+                    // Clearing also moves live streams to the default output
+                    self.pw(json!({ "ClearApplicationRoute": definition }));
                     self.enforced.remove(&(process, name));
                 }
             }
         }
-    }
-
-    fn mapping_of(&self, process: &str, name: &str) -> Option<&String> {
-        self.model
-            .status
-            .audio
-            .profile
-            .application_mapping
-            .source
-            .get(process)
-            .and_then(|m| m.get(name))
     }
 
     pub(super) fn view_apps(&self) -> El<'_> {

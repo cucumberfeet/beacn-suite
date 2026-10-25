@@ -818,6 +818,11 @@ pub struct AppRouting {
     /// Catalog key -> route. No entry means "Default" (the default output, System).
     #[serde(default)]
     pub apps: BTreeMap<String, SavedRoute>,
+    /// Apps put back to "Default" while they weren't playing. PipeWire (WirePlumber) may
+    /// still remember the old channel for them, so the next time one plays its stream is
+    /// sent to the default output once, which also makes WirePlumber forget the old target.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub reset: std::collections::BTreeSet<String>,
 }
 
 fn modified(path: &Path) -> Option<std::time::SystemTime> {
