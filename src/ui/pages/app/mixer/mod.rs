@@ -53,6 +53,42 @@ pub enum Tab {
     Settings,
 }
 
+impl Tab {
+    const ALL: [(Tab, &'static str); 5] = [
+        (Tab::Mixer, "mixer"),
+        (Tab::Routing, "routing"),
+        (Tab::Applications, "applications"),
+        (Tab::Devices, "devices"),
+        (Tab::Settings, "settings"),
+    ];
+
+    fn path() -> Option<std::path::PathBuf> {
+        directories::ProjectDirs::from("", "", "beacn-utility")
+            .map(|dirs| dirs.config_dir().join("mixer-tab"))
+    }
+
+    /// The tab that was open last time (`~/.config/beacn-utility/mixer-tab`)
+    fn load() -> Self {
+        let saved = Self::path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        Self::ALL
+            .iter()
+            .find(|(_, name)| *name == saved.trim())
+            .map(|(tab, _)| *tab)
+            .unwrap_or_default()
+    }
+
+    fn save(self) {
+        let Some(path) = Self::path() else { return };
+        if let Some((_, name)) = Self::ALL.iter().find(|(tab, _)| *tab == self)
+            && let Err(e) = std::fs::write(&path, name)
+        {
+            debug!("Mixer: couldn't save the open tab: {e}");
+        }
+    }
+}
+
 /// Small menus anchored to the button that opened them
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Popup {
@@ -203,7 +239,7 @@ impl MixerPage {
             queued: HashMap::new(),
             overrides: HashMap::new(),
             meters: HashMap::new(),
-            tab: Tab::default(),
+            tab: Tab::load(),
             popup: None,
             modal: None,
             error: None,
@@ -460,6 +496,7 @@ impl MixerPage {
             MixerMessage::Tab(tab) => {
                 self.tab = tab;
                 self.popup = None;
+                tab.save();
             }
             MixerMessage::OpenPopup(popup) => {
                 self.popup = if self.popup.as_ref() == Some(&popup) {

@@ -49,6 +49,23 @@ const STEAM_TOOLS: &[&str] = &[
     "steamvr",
 ];
 
+/// Helper executables many games ship under the same name
+const SHARED_EXES: &[&str] = &[
+    "launcher.exe",
+    "7za.exe",
+    "7z.exe",
+    "unrealcefsubprocess.exe",
+    "overlayinjector.exe",
+    "crs-handler.exe",
+    "crs-uploader.exe",
+    "cefsharp.browsersubprocess.exe",
+    "steamlauncher.exe",
+    "installermessage.exe",
+    "cleanup.exe",
+    "vc_redist.x64.exe",
+    "dxsetup.exe",
+];
+
 /// Folders inside a game's install dir that hold installers, not the game
 const SKIP_DIRS: &[&str] = &[
     "redist",
@@ -565,7 +582,9 @@ fn executables(root: &Path, out: &mut Vec<String>) {
                 }
             } else if kind.is_file() {
                 if name.ends_with(".exe") {
-                    let junk = name.starts_with("unins")
+                    // Helpers many games ship under the same name would match the wrong game
+                    let junk = SHARED_EXES.contains(&name.as_str())
+                        || name.starts_with("unins")
                         || name.contains("crashhandler")
                         || name.contains("crashreport")
                         || name.contains("setup")
