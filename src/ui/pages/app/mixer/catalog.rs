@@ -787,9 +787,16 @@ pub struct SavedRoute {
 pub struct AppRouting {
     #[serde(default)]
     pub version: u32,
+    /// When the file was last read or written by us (to notice hand edits)
+    #[serde(skip)]
+    pub loaded_at: Option<std::time::SystemTime>,
     /// Catalog key -> route. No entry means "Default" (the default output, System).
     #[serde(default)]
     pub apps: BTreeMap<String, SavedRoute>,
+}
+
+fn modified(path: &Path) -> Option<std::time::SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 fn routing_path() -> Option<PathBuf> {
@@ -802,16 +809,31 @@ impl AppRouting {
         let Some(path) = routing_path() else {
             return Self::default();
         };
-        match fs::read_to_string(&path) {
+        let mut routing: Self = match fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
                 warn!("Couldn't read {}: {e}", path.display());
                 Self::default()
             }),
             Err(_) => Self::default(),
-        }
+        };
+        routing.loaded_at = modified(&path);
+        routing
     }
 
-    pub fn save(&self) {
+    /// Re-reads the file if it was changed outside the app (hand edits, a script)
+    pub fn reload_if_changed(&mut self) -> bool {
+        let Some(path) = routing_path() else {
+            return false;
+        };
+        let now = modified(&path);
+        if now == self.loaded_at {
+            return false;
+        }
+        *self = Self::load();
+        true
+    }
+
+    pub fn save(&mut self) {
         let Some(path) = routing_path() else { return };
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
@@ -824,6 +846,7 @@ impl AppRouting {
                 if let Err(e) = fs::write(&tmp, text).and_then(|_| fs::rename(&tmp, &path)) {
                     warn!("Couldn't save {}: {e}", path.display());
                 }
+                self.loaded_at = modified(&path);
             }
             Err(e) => warn!("Couldn't encode app routing: {e}"),
         }

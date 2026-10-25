@@ -107,6 +107,10 @@ impl MixerPage {
         let Some(loaded) = self.catalog.clone() else {
             return Task::none();
         };
+        if self.routing.reload_if_changed() {
+            info!("Applications: app-routing.json changed, reloaded");
+            self.enforced.clear();
+        }
         let catalog = &loaded.catalog;
         let running = &self.model.status.audio.applications.source;
         let mapping = &self.model.status.audio.profile.application_mapping.source;
