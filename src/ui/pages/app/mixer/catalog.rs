@@ -507,12 +507,12 @@ fn scan_steam(
                 .map(|d| lib.join("steamapps/common").join(d));
             let mut binaries = vec![];
             if let Some(dir) = &install {
-                let mut budget = 6000;
-                executables(dir, 0, &mut budget, &mut binaries);
+                executables(dir, &mut binaries);
             }
             binaries.sort();
             binaries.dedup();
             binaries.truncate(96);
+            debug!("App catalog: Steam {appid} {name}: {}", binaries.join(", "));
 
             let icon = steam_icons
                 .get(appid)
@@ -540,39 +540,45 @@ fn scan_steam(
     apps
 }
 
-/// Collects .exe names and native (ELF) executables a few levels into a game's folder
-fn executables(dir: &Path, depth: u8, budget: &mut u32, out: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if *budget == 0 {
-            return;
-        }
-        *budget -= 1;
-        let name = entry.file_name().to_string_lossy().to_lowercase();
-        let Ok(kind) = entry.file_type() else {
+/// Collects .exe names and native (ELF) executables a few levels into a game's folder.
+/// Breadth first, so the game's own exe (usually near the top) is found before a big asset
+/// folder uses up the budget.
+fn executables(root: &Path, out: &mut Vec<String>) {
+    let mut budget: u32 = 20000;
+    let mut queue = std::collections::VecDeque::from([(root.to_path_buf(), 0u8)]);
+    while let Some((dir, depth)) = queue.pop_front() {
+        let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
-        if kind.is_dir() {
-            if depth < 4 && !SKIP_DIRS.iter().any(|s| name.contains(s)) {
-                executables(&entry.path(), depth + 1, budget, out);
+        for entry in entries.flatten() {
+            if budget == 0 {
+                return;
             }
-        } else if kind.is_file() {
-            if name.ends_with(".exe") {
-                let junk = name.starts_with("unins")
-                    || name.contains("crashhandler")
-                    || name.contains("crashreport")
-                    || name.contains("setup")
-                    || name.contains("redist")
-                    || name.contains("prereq");
-                if !junk {
+            budget -= 1;
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                if depth < 4 && !SKIP_DIRS.iter().any(|s| name.contains(s)) {
+                    queue.push_back((entry.path(), depth + 1));
+                }
+            } else if kind.is_file() {
+                if name.ends_with(".exe") {
+                    let junk = name.starts_with("unins")
+                        || name.contains("crashhandler")
+                        || name.contains("crashreport")
+                        || name.contains("setup")
+                        || name.contains("redist")
+                        || name.contains("prereq");
+                    if !junk {
+                        out.push(name);
+                    }
+                } else if ((depth <= 2 && !name.contains('.')) || name.ends_with(".x86_64"))
+                    && is_elf_executable(&entry.path())
+                {
                     out.push(name);
                 }
-            } else if ((depth <= 2 && !name.contains('.')) || name.ends_with(".x86_64"))
-                && is_elf_executable(&entry.path())
-            {
-                out.push(name);
             }
         }
     }
