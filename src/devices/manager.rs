@@ -27,13 +27,15 @@ use beacn_lib::controller::messages::Message as CMessage;
 use beacn_lib::controller::{BeacnControlDevice, open_control_device_with_timer};
 use beacn_lib::flume::{Receiver, Sender, bounded, unbounded};
 use beacn_lib::manager::{
-    DeviceLocation, DeviceType, HotPlugMessage, HotPlugThreadManagement, watch_hotplug_devices,
+    DeviceLocation, DeviceType, HotPlugMessage, HotPlugThreadManagement, get_beacn_mic_devices,
+    get_beacn_mix_create_device, get_beacn_mix_device, get_beacn_studio_devices,
+    watch_hotplug_devices,
 };
 use beacn_lib::version::VersionNumber;
 use beacn_lib::{BeacnError, UsbError};
 use iced::futures::FutureExt;
-use log::{debug, error};
-use std::collections::HashMap;
+use log::{debug, error, warn};
+use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use strum_macros::Display;
@@ -41,13 +43,51 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use web_time::Duration;
 
+/// Starts beacn-lib's hotplug watcher, which first reports every device already present and
+/// then follows hotplug events. Each watcher gets its own channels, so a replaced one can't
+/// stop the manager when it winds down.
+fn start_hotplug_watch() -> (Receiver<HotPlugMessage>, Sender<HotPlugThreadManagement>) {
+    let (plug_tx, plug_rx) = unbounded();
+    let (manage_tx, manage_rx) = unbounded();
+    tokio::spawn(watch_hotplug_devices(plug_tx, manage_rx));
+    (plug_rx, manage_tx)
+}
+
+/// Every Beacn device the kernel has right now, whatever the hotplug watcher has reported
+async fn present_beacn_devices() -> HashSet<DeviceLocation> {
+    let mut present = HashSet::new();
+    present.extend(get_beacn_mic_devices().await);
+    present.extend(get_beacn_studio_devices().await);
+    present.extend(get_beacn_mix_device().await);
+    present.extend(get_beacn_mix_create_device().await);
+    present
+}
+
+/// Settings we replay to a control device after a wake, keyed so newer values replace older
+fn setting_key(message: &CMessage) -> Option<String> {
+    match message {
+        CMessage::DisplayBrightness(_) => Some("display_brightness".into()),
+        CMessage::ButtonBrightness(_) => Some("button_brightness".into()),
+        CMessage::DisplayDimTime(_) => Some("display_dim".into()),
+        CMessage::ButtonColour(button, _) => Some(format!("colour_{button:?}")),
+        _ => None,
+    }
+}
+
+/// How often we compare the devices we know with the devices that are really there
+const RECONCILE_PERIOD: Duration = Duration::from_secs(2);
+
+/// Never re-scan more often than this, whatever the checks say
+const MIN_RESCAN_GAP: Duration = Duration::from_secs(15);
+
+/// After a wake or unlock, the screens get switched on, their settings re-sent and a full frame
+/// pushed again at these delays, in case the device was still resetting the first time
+const WAKE_REPUSH: [Duration; 2] = [Duration::from_secs(3), Duration::from_secs(10)];
+
 pub(crate) async fn spawn_device_manager(
     self_rx: Receiver<ManagerMessages>,
     event_tx: Sender<DeviceMessage>,
 ) {
-    let (plug_tx, plug_rx) = unbounded();
-    let (manage_tx, manage_rx) = unbounded();
-
     #[cfg_attr(not(target_os = "linux"), allow(unused))]
     let (login_tx, login_rx) = bounded(5);
 
@@ -64,7 +104,25 @@ pub(crate) async fn spawn_device_manager(
     // watch_hotplug_devices is beacn-lib's async-native hotplug watcher -- spawn it as a
     // task instead of spawn_hotplug_handler, which would give us a dedicated OS thread we
     // don't need now that we're on a runtime.
-    tokio::spawn(watch_hotplug_devices(plug_tx, manage_rx));
+    let (mut plug_rx, mut manage_tx) = start_hotplug_watch();
+
+    // Every location the watcher has reported (opened or not) and not yet removed
+    let mut attached: HashSet<DeviceLocation> = HashSet::new();
+
+    // The hotplug watcher can miss events: when Balthasar wakes, its USB controllers are
+    // re-bound and dozens of devices re-enumerate at once, and the add events for the Beacn
+    // devices got lost (the Mix Create's screen then stays black until it's replugged). So we
+    // also check what's really there, and start a fresh watcher (a full re-enumeration) when
+    // the two disagree.
+    let mut reconcile = tokio::time::interval(RECONCILE_PERIOD);
+    reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut mismatches = 0u8;
+    let mut last_rescan: Option<tokio::time::Instant> = None;
+
+    // Last settings sent to each control device, and when to push them (and a frame) again
+    let mut settings: HashMap<DeviceLocation, HashMap<String, CMessage>> = HashMap::new();
+    let mut repush_at: Vec<tokio::time::Instant> = vec![];
+    let mut locked = false;
 
     #[cfg(target_os = "linux")]
     {
@@ -97,6 +155,10 @@ pub(crate) async fn spawn_device_manager(
 
                     LoginEventTriggers::Wake(tx) => {
                         suspended = false;
+                        mismatches = 0;
+                        reconcile.reset();
+                        let now = tokio::time::Instant::now();
+                        repush_at = WAKE_REPUSH.iter().map(|d| now + *d).collect();
 
                         for (location, device_type, health_tx) in pending_attachments.drain(..) {
                             handle_device_attached(
@@ -117,13 +179,17 @@ pub(crate) async fn spawn_device_manager(
                     }
 
                     LoginEventTriggers::Lock => {
+                        locked = true;
                         set_pipeweaver_draw_suspended(&devices, true);
                         enable_devices(&devices, false).await;
                     }
 
                     LoginEventTriggers::Unlock => {
+                        locked = false;
                         set_pipeweaver_draw_suspended(&devices, false);
                         enable_devices(&devices, true).await;
+                        let now = tokio::time::Instant::now();
+                        repush_at = WAKE_REPUSH.iter().map(|d| now + *d).collect();
                     }
                 }
             }
@@ -133,6 +199,7 @@ pub(crate) async fn spawn_device_manager(
 
                 match msg {
                     HotPlugMessage::DeviceAttached(location, device_type, health_tx) => {
+                        attached.insert(location.clone());
                         if suspended {
                             pending_attachments.push((location, device_type, health_tx));
                         } else {
@@ -150,20 +217,56 @@ pub(crate) async fn spawn_device_manager(
                     }
 
                     HotPlugMessage::DeviceRemoved(location) => {
+                        attached.remove(&location);
                         pending_attachments.retain(|(loc, _, _)| *loc != location);
-
-                        let _ = event_tx.send(DeviceMessage::DeviceRemoved(location.clone()));
-
-                        devices.remove(&location);
-                        if let Some(forwarder) = forwarders.remove(&location) {
-                            forwarder.abort();
-                        }
-
-                        //let _ = self_tx.send(ToMainMessages::RequestRedraw);
+                        remove_device(&location, &mut devices, &mut forwarders, &mut settings, &event_tx);
                     }
 
                     HotPlugMessage::ThreadStopped => break,
                 }
+            }
+
+            _ = reconcile.tick() => {
+                if suspended {
+                    continue;
+                }
+
+                let now = tokio::time::Instant::now();
+                if repush_at.first().is_some_and(|at| *at <= now) {
+                    repush_at.remove(0);
+                    if !locked {
+                        repush_displays(&devices, &settings).await;
+                    }
+                }
+
+                let present = present_beacn_devices().await;
+                if present == attached {
+                    mismatches = 0;
+                    continue;
+                }
+
+                // A normal plug or unplug shows up here for a moment before its event
+                // arrives, so only act when it's still different on the next check
+                mismatches += 1;
+                if mismatches < 2 || last_rescan.is_some_and(|at| at.elapsed() < MIN_RESCAN_GAP) {
+                    continue;
+                }
+                mismatches = 0;
+                last_rescan = Some(now);
+
+                let missing: Vec<String> = present.difference(&attached).map(|l| l.to_string()).collect();
+                let gone: Vec<String> = attached.difference(&present).map(|l| l.to_string()).collect();
+                warn!(
+                    "USB devices changed without hotplug events (new: {missing:?}, gone: {gone:?}), re-scanning"
+                );
+
+                // Replace the watcher and reopen everything from scratch
+                let _ = manage_tx.send(HotPlugThreadManagement::Quit);
+                for location in attached.drain() {
+                    remove_device(&location, &mut devices, &mut forwarders, &mut settings, &event_tx);
+                }
+                pending_attachments.clear();
+                (plug_rx, manage_tx) = start_hotplug_watch();
             }
 
             Ok((location, req)) = device_event_rx.recv_async() => {
@@ -249,6 +352,9 @@ pub(crate) async fn spawn_device_manager(
                         if let Some(DeviceEntry::Control(dev, ..)) = devices.get(&location) {
                             match msg {
                                 ControlMessage::Handle(msg, resp) => {
+                                    if let Some(key) = setting_key(&msg) {
+                                        settings.entry(location.clone()).or_default().insert(key, msg.clone());
+                                    }
                                     let response = AssertUnwindSafe(dev.handle_message(msg)).catch_unwind().await;
 
                                     match response {
@@ -499,6 +605,40 @@ async fn enable_devices(devices: &HashMap<DeviceLocation, DeviceEntry>, enabled:
         if let DeviceEntry::Control(dev, ..) = device {
             let message = CMessage::Enabled(enabled);
             let _ = dev.handle_message(message).await;
+        }
+    }
+}
+
+fn remove_device(
+    location: &DeviceLocation,
+    devices: &mut HashMap<DeviceLocation, DeviceEntry>,
+    forwarders: &mut HashMap<DeviceLocation, JoinHandle<()>>,
+    settings: &mut HashMap<DeviceLocation, HashMap<String, CMessage>>,
+    event_tx: &Sender<DeviceMessage>,
+) {
+    let _ = event_tx.send(DeviceMessage::DeviceRemoved(location.clone()));
+    devices.remove(location);
+    settings.remove(location);
+    if let Some(forwarder) = forwarders.remove(location) {
+        forwarder.abort();
+    }
+}
+
+/// Switches every control device's screen on, re-sends its settings and has Pipeweaver's
+/// screen handler push a full frame. Harmless when nothing was wrong.
+async fn repush_displays(
+    devices: &HashMap<DeviceLocation, DeviceEntry>,
+    settings: &HashMap<DeviceLocation, HashMap<String, CMessage>>,
+) {
+    for (location, device) in devices {
+        if let DeviceEntry::Control(dev, _, draw_suspend, _) = device {
+            debug!("Re-pushing the screen of {location}");
+            let _ = dev.handle_message(CMessage::Enabled(true)).await;
+            for message in settings.get(location).into_iter().flat_map(|s| s.values()) {
+                let _ = dev.handle_message(message.clone()).await;
+            }
+            // Sending even an unchanged value makes the handler invalidate and redraw
+            let _ = draw_suspend.send(false);
         }
     }
 }
